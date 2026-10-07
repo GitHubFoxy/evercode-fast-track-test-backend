@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    environment:
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
+      COINMARKETCAP_API_KEY: ${COINMARKETCAP_API_KEY:?Set COINMARKETCAP_API_KEY in .env}
+      PORT: "${PORT:-3000}"
+      DATABASE_PATH: /data/evercode.sqlite
+      PRICE_CURRENCY: ${PRICE_CURRENCY:-USD}
+      CMC_TIMEOUT_MS: ${CMC_TIMEOUT_MS:-10000}
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-60000}
+    volumes:
+      - sqlite-data:/data
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:

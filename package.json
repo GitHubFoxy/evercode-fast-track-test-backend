@@ -1,0 +1,20 @@
+{
+  "name": "evercode-fast-track-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "REST API for tracking cryptocurrency prices",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/main.js",
+    "test": "npm run build && jest --runInBand"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "jest": "^30.0.5",
+    "supertest": "^7.1.4",
+    "typescript": "^5.8.3"
+  }
+}
