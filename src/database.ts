@@ -108,7 +108,7 @@ export function openDatabase(databasePath: string): any {
   return database;
 }
 
-export function listTrackedCryptocurrencies(database: any): TrackedCryptocurrency[] {
+export function listTrackedCryptocurrencies(database: any, page?: { limit: number; offset: number }): TrackedCryptocurrency[] {
   return database.prepare(`
     SELECT
       tracked.id AS id,
@@ -120,7 +120,8 @@ export function listTrackedCryptocurrencies(database: any): TrackedCryptocurrenc
     INNER JOIN cryptocurrencies AS cryptocurrency
       ON cryptocurrency.id = tracked.cryptocurrency_id
     ORDER BY tracked.id
-  `).all() as TrackedCryptocurrency[];
+    LIMIT ? OFFSET ?
+  `).all(page?.limit ?? -1, page?.offset ?? 0) as TrackedCryptocurrency[];
 }
 
 export function isCmcIdTracked(database: any, cmcId: number): boolean {
@@ -206,6 +207,35 @@ export function createTrackedCryptocurrencyWithQuote(
   }
 }
 
+export function saveTrackedQuotes(
+  database: any,
+  snapshot: TrackingSnapshot[],
+  quotes: StoredUsdQuote[],
+  fetchedAt: string,
+): PriceHistoryEntry[] {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const tracked of snapshot) {
+      assertTrackingSnapshotCurrent(database, tracked);
+    }
+    const saved = snapshot.map((tracked) => {
+      const quote = quotes.find((item) => item.cmcId === tracked.cmcId);
+      if (!quote) throw new Error("Missing validated quote");
+      const cryptocurrency = database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(tracked.cmcId);
+      database.prepare(`UPDATE cryptocurrencies SET symbol = ?, name = ?, last_updated_at = ? WHERE id = ?`)
+        .run(quote.symbol, quote.name, fetchedAt, cryptocurrency.id);
+      const inserted = database.prepare(`INSERT INTO price_history (cryptocurrency_id, price, fetched_at, provider_updated_at)
+        VALUES (?, ?, ?, ?)`).run(cryptocurrency.id, quote.price, fetchedAt, quote.providerUpdatedAt);
+      return { id: Number(inserted.lastInsertRowid), ...quote, currency: "USD" as const, fetchedAt };
+    });
+    database.exec("COMMIT");
+    return saved;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function getTrackingSnapshot(database: any, trackingId: number): TrackingSnapshot | undefined {
   return database.prepare(`
     SELECT tracked.id AS id, coin.cmc_id AS cmcId, tracked.revision AS revision
@@ -269,6 +299,7 @@ export function replaceTrackedCryptocurrencyWithQuote(
 export function getCryptocurrencyHistory(
   database: any,
   cmcId: number,
+  page: { limit: number; offset: number; from?: string; to?: string } = { limit: 50, offset: 0 },
 ): PriceHistoryEntry[] | undefined {
   const cryptocurrency = database.prepare(
     "SELECT id FROM cryptocurrencies WHERE cmc_id = ?",
@@ -289,6 +320,9 @@ export function getCryptocurrencyHistory(
     INNER JOIN cryptocurrencies AS cryptocurrency
       ON cryptocurrency.id = history.cryptocurrency_id
     WHERE cryptocurrency.cmc_id = ?
+      AND (? IS NULL OR history.fetched_at >= ?)
+      AND (? IS NULL OR history.fetched_at <= ?)
     ORDER BY history.fetched_at, history.id
-  `).all(cmcId) as PriceHistoryEntry[];
+    LIMIT ? OFFSET ?
+  `).all(cmcId, page.from ?? null, page.from ?? null, page.to ?? null, page.to ?? null, page.limit, page.offset) as PriceHistoryEntry[];
 }

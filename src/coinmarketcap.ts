@@ -27,7 +27,7 @@ function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isIsoTimestamp(value: unknown): value is string {
+export function isIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
   if (!match || !Number.isFinite(Date.parse(value))) return false;
@@ -55,7 +55,9 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
     return invalidResponse();
   }
 
-  const coin = body.data.find((entry: unknown) => isRecord(entry) && entry.id === cmcId);
+  const matches = body.data.filter((entry: unknown) => isRecord(entry) && entry.id === cmcId);
+  if (matches.length > 1) return invalidResponse();
+  const coin = matches[0];
   if (!coin) throw new CoinMarketCapError("unknown-id");
   if (typeof coin.name !== "string" || coin.name.trim() === ""
       || typeof coin.symbol !== "string" || coin.symbol.trim() === ""
@@ -63,7 +65,9 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
     return invalidResponse();
   }
 
-  const quote = coin.quote.find((entry: unknown) => isRecord(entry) && entry.symbol === "USD");
+  const usdQuotes = coin.quote.filter((entry: unknown) => isRecord(entry) && entry.symbol === "USD");
+  if (usdQuotes.length !== 1) return invalidResponse();
+  const quote = usdQuotes[0];
   if (!quote || typeof quote.price !== "number" || !Number.isFinite(quote.price) || quote.price < 0
       || !isIsoTimestamp(quote.last_updated)) {
     return invalidResponse();
@@ -78,12 +82,12 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
   };
 }
 
-export async function getUsdQuote(config: CoinMarketCapConfig, cmcId: number): Promise<UsdQuote> {
+async function requestQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Promise<unknown> {
   const baseUrl = (config.baseUrl ?? "https://pro-api.coinmarketcap.com").replace(/\/$/, "");
   let response: any;
   try {
     response = await axios.get(
-      `${baseUrl}/v3/cryptocurrency/quotes/latest?id=${cmcId}&convert=USD`,
+      `${baseUrl}/v3/cryptocurrency/quotes/latest?id=${cmcIds.join(',')}&convert=USD`,
       {
         headers: { "X-CMC_PRO_API_KEY": config.apiKey },
         timeout: config.timeoutMs,
@@ -98,5 +102,20 @@ export async function getUsdQuote(config: CoinMarketCapConfig, cmcId: number): P
     }
     throw new CoinMarketCapError("provider-error");
   }
-  return parseQuote(response.data, cmcId);
+  return response.data;
+}
+
+export async function getUsdQuote(config: CoinMarketCapConfig, cmcId: number): Promise<UsdQuote> {
+  return parseQuote(await requestQuotes(config, [cmcId]), cmcId);
+}
+
+// 250 is a credit tier, not a documented provider maximum.
+export async function getUsdQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Promise<UsdQuote[]> {
+  const quotes: UsdQuote[] = [];
+  for (let offset = 0; offset < cmcIds.length; offset += 250) {
+    const batch = cmcIds.slice(offset, offset + 250);
+    const body = await requestQuotes(config, batch);
+    for (const id of batch) quotes.push(parseQuote(body, id));
+  }
+  return quotes;
 }
