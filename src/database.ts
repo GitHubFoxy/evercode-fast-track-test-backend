@@ -10,6 +10,19 @@ export interface TrackedCryptocurrency {
   lastUpdatedAt: string | null;
 }
 
+export interface TrackingSnapshot {
+  id: number;
+  cmcId: number;
+  revision: number;
+}
+
+export class TrackingChangedError extends Error {
+  constructor() {
+    super("Tracking record changed while the request was in progress");
+    this.name = "TrackingChangedError";
+  }
+}
+
 export interface StoredUsdQuote {
   cmcId: number;
   name: string;
@@ -52,7 +65,7 @@ export function openDatabase(databasePath: string): any {
     );
 
     CREATE TABLE IF NOT EXISTS tracked_cryptocurrencies (
-      id INTEGER PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       cryptocurrency_id INTEGER NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       FOREIGN KEY (cryptocurrency_id) REFERENCES cryptocurrencies(id) ON DELETE RESTRICT
@@ -70,6 +83,28 @@ export function openDatabase(databasePath: string): any {
     CREATE INDEX IF NOT EXISTS idx_price_history_cryptocurrency_fetched_at
       ON price_history (cryptocurrency_id, fetched_at, id);
   `);
+  const trackingSchema = database.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tracked_cryptocurrencies'",
+  ).get();
+  if (!trackingSchema.sql.includes("AUTOINCREMENT")) {
+    database.exec(`
+      BEGIN IMMEDIATE;
+      ALTER TABLE tracked_cryptocurrencies RENAME TO old_tracked_cryptocurrencies;
+      CREATE TABLE tracked_cryptocurrencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cryptocurrency_id INTEGER NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        FOREIGN KEY (cryptocurrency_id) REFERENCES cryptocurrencies(id) ON DELETE RESTRICT
+      );
+      INSERT INTO tracked_cryptocurrencies SELECT * FROM old_tracked_cryptocurrencies;
+      DROP TABLE old_tracked_cryptocurrencies;
+      COMMIT;
+    `);
+  }
+  if (!database.prepare("PRAGMA table_info(tracked_cryptocurrencies)").all()
+      .some((column: any) => column.name === "revision")) {
+    database.exec("ALTER TABLE tracked_cryptocurrencies ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
+  }
   return database;
 }
 
@@ -167,6 +202,66 @@ export function createTrackedCryptocurrencyWithQuote(
     try {
       database.exec("ROLLBACK");
     } catch {}
+    throw error;
+  }
+}
+
+export function getTrackingSnapshot(database: any, trackingId: number): TrackingSnapshot | undefined {
+  return database.prepare(`
+    SELECT tracked.id AS id, coin.cmc_id AS cmcId, tracked.revision AS revision
+    FROM tracked_cryptocurrencies AS tracked
+    JOIN cryptocurrencies AS coin ON coin.id = tracked.cryptocurrency_id
+    WHERE tracked.id = ?
+  `).get(trackingId) as TrackingSnapshot | undefined;
+}
+
+// Call inside the same write transaction as quote/history persistence, after external I/O.
+export function assertTrackingSnapshotCurrent(database: any, snapshot: TrackingSnapshot): void {
+  const current = getTrackingSnapshot(database, snapshot.id);
+  if (!current || current.revision !== snapshot.revision || current.cmcId !== snapshot.cmcId) {
+    throw new TrackingChangedError();
+  }
+}
+
+export function deleteTrackedCryptocurrency(database: any, trackingId: number): boolean {
+  return database.prepare("DELETE FROM tracked_cryptocurrencies WHERE id = ?").run(trackingId).changes > 0;
+}
+
+export function replaceTrackedCryptocurrencyWithQuote(
+  database: any,
+  snapshot: TrackingSnapshot,
+  quote: StoredUsdQuote,
+  fetchedAt: string,
+): TrackedCryptocurrency {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    assertTrackingSnapshotCurrent(database, snapshot);
+    const trackingId = snapshot.id;
+    const duplicate = database.prepare(`
+      SELECT tracked.id FROM tracked_cryptocurrencies AS tracked
+      JOIN cryptocurrencies AS coin ON coin.id = tracked.cryptocurrency_id
+      WHERE coin.cmc_id = ? AND tracked.id != ?
+    `).get(quote.cmcId, trackingId);
+    if (duplicate) throw new DuplicateTrackingError();
+    database.prepare(`
+      INSERT INTO cryptocurrencies (cmc_id, symbol, name, last_updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(cmc_id) DO UPDATE SET
+        symbol = excluded.symbol, name = excluded.name, last_updated_at = excluded.last_updated_at
+    `).run(quote.cmcId, quote.symbol, quote.name, fetchedAt);
+    const coin = database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(quote.cmcId);
+    database.prepare("UPDATE tracked_cryptocurrencies SET cryptocurrency_id = ?, revision = revision + 1 WHERE id = ?")
+      .run(coin.id, trackingId);
+    database.prepare(`
+      INSERT INTO price_history (cryptocurrency_id, price, fetched_at, provider_updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run(coin.id, quote.price, fetchedAt, quote.providerUpdatedAt);
+    const tracked = getTrackedCryptocurrency(database, trackingId);
+    if (!tracked) throw new Error("Tracking record was not found");
+    database.exec("COMMIT");
+    return tracked;
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch {}
     throw error;
   }
 }
