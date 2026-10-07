@@ -1,10 +1,22 @@
 const express: any = require("express");
 const crypto: any = require("node:crypto");
-const { openDatabase, listTrackedCryptocurrencies } = require("./database");
+const {
+  openDatabase,
+  listTrackedCryptocurrencies,
+  isCmcIdTracked,
+  getTrackedCryptocurrency,
+  createTrackedCryptocurrencyWithQuote,
+  getCryptocurrencyHistory,
+  DuplicateTrackingError,
+} = require("./database");
+const { getUsdQuote, CoinMarketCapError } = require("./coinmarketcap");
 
 export interface ApplicationConfig {
   apiToken: string;
   databasePath: string;
+  coinMarketCapApiKey: string;
+  coinMarketCapTimeoutMs: number;
+  coinMarketCapBaseUrl?: string;
 }
 
 export interface Application {
@@ -45,6 +57,88 @@ export function createApplication(config: ApplicationConfig): Application {
 
   app.get("/api/tracked-cryptocurrencies", (_request: any, response: any) => {
     response.status(200).json(listTrackedCryptocurrencies(database));
+  });
+
+  app.post("/api/tracked-cryptocurrencies", async (request: any, response: any, next: any) => {
+    const body = request.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)
+        || Object.keys(body).length !== 1 || !Object.hasOwn(body, "cmcId")
+        || !Number.isSafeInteger(body.cmcId) || body.cmcId <= 0) {
+      response.status(400).json({
+        error: { code: "INVALID_CMC_ID", message: "A positive integer cmcId is required" },
+      });
+      return;
+    }
+
+    try {
+      if (isCmcIdTracked(database, body.cmcId)) {
+        response.status(409).json({
+          error: { code: "ALREADY_TRACKED", message: "Cryptocurrency is already tracked" },
+        });
+        return;
+      }
+
+      const quote = await getUsdQuote({
+        apiKey: config.coinMarketCapApiKey,
+        timeoutMs: config.coinMarketCapTimeoutMs,
+        baseUrl: config.coinMarketCapBaseUrl,
+      }, body.cmcId);
+      const tracked = createTrackedCryptocurrencyWithQuote(database, quote, new Date().toISOString());
+      response.status(201).json(tracked);
+    } catch (error: any) {
+      if (error instanceof DuplicateTrackingError) {
+        response.status(409).json({
+          error: { code: "ALREADY_TRACKED", message: "Cryptocurrency is already tracked" },
+        });
+        return;
+      }
+      if (error instanceof CoinMarketCapError) {
+        const failure = error.kind === "unknown-id"
+          ? { status: 400, code: "CMC_ID_NOT_FOUND", message: "CoinMarketCap ID was not found" }
+          : error.kind === "timeout"
+            ? { status: 504, code: "CMC_TIMEOUT", message: "CoinMarketCap request timed out" }
+            : { status: 502, code: "CMC_API_ERROR", message: "CoinMarketCap request failed" };
+        response.status(failure.status).json({
+          error: { code: failure.code, message: failure.message },
+        });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/tracked-cryptocurrencies/:id", (request: any, response: any) => {
+    if (!/^[1-9]\d*$/.test(request.params.id) || !Number.isSafeInteger(Number(request.params.id))) {
+      response.status(400).json({
+        error: { code: "INVALID_TRACKING_ID", message: "Tracking ID must be a positive integer" },
+      });
+      return;
+    }
+    const tracked = getTrackedCryptocurrency(database, Number(request.params.id));
+    if (!tracked) {
+      response.status(404).json({
+        error: { code: "TRACKING_NOT_FOUND", message: "Tracking record was not found" },
+      });
+      return;
+    }
+    response.status(200).json(tracked);
+  });
+
+  app.get("/api/cryptocurrencies/:cmcId/history", (request: any, response: any) => {
+    if (!/^[1-9]\d*$/.test(request.params.cmcId) || !Number.isSafeInteger(Number(request.params.cmcId))) {
+      response.status(400).json({
+        error: { code: "INVALID_CMC_ID", message: "CMC ID must be a positive integer" },
+      });
+      return;
+    }
+    const history = getCryptocurrencyHistory(database, Number(request.params.cmcId));
+    if (!history) {
+      response.status(404).json({
+        error: { code: "CRYPTOCURRENCY_NOT_FOUND", message: "Cryptocurrency was not found" },
+      });
+      return;
+    }
+    response.status(200).json(history);
   });
 
   app.use((_request: any, response: any) => {

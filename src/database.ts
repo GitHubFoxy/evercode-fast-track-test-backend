@@ -10,6 +10,32 @@ export interface TrackedCryptocurrency {
   lastUpdatedAt: string | null;
 }
 
+export interface StoredUsdQuote {
+  cmcId: number;
+  name: string;
+  symbol: string;
+  price: number;
+  providerUpdatedAt: string;
+}
+
+export interface PriceHistoryEntry {
+  id: number;
+  cmcId: number;
+  symbol: string;
+  name: string;
+  price: number;
+  currency: "USD";
+  fetchedAt: string;
+  providerUpdatedAt: string;
+}
+
+export class DuplicateTrackingError extends Error {
+  constructor() {
+    super("Cryptocurrency is already tracked");
+    this.name = "DuplicateTrackingError";
+  }
+}
+
 export function openDatabase(databasePath: string): any {
   fs.mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -60,4 +86,114 @@ export function listTrackedCryptocurrencies(database: any): TrackedCryptocurrenc
       ON cryptocurrency.id = tracked.cryptocurrency_id
     ORDER BY tracked.id
   `).all() as TrackedCryptocurrency[];
+}
+
+export function isCmcIdTracked(database: any, cmcId: number): boolean {
+  return Boolean(database.prepare(`
+    SELECT 1
+    FROM tracked_cryptocurrencies AS tracked
+    INNER JOIN cryptocurrencies AS cryptocurrency
+      ON cryptocurrency.id = tracked.cryptocurrency_id
+    WHERE cryptocurrency.cmc_id = ?
+  `).get(cmcId));
+}
+
+export function getTrackedCryptocurrency(
+  database: any,
+  trackingId: number,
+): TrackedCryptocurrency | undefined {
+  return database.prepare(`
+    SELECT
+      tracked.id AS id,
+      cryptocurrency.cmc_id AS cmcId,
+      cryptocurrency.symbol AS symbol,
+      cryptocurrency.name AS name,
+      cryptocurrency.last_updated_at AS lastUpdatedAt
+    FROM tracked_cryptocurrencies AS tracked
+    INNER JOIN cryptocurrencies AS cryptocurrency
+      ON cryptocurrency.id = tracked.cryptocurrency_id
+    WHERE tracked.id = ?
+  `).get(trackingId) as TrackedCryptocurrency | undefined;
+}
+
+export function createTrackedCryptocurrencyWithQuote(
+  database: any,
+  quote: StoredUsdQuote,
+  fetchedAt: string,
+): TrackedCryptocurrency {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const alreadyTracked = database.prepare(`
+      SELECT 1
+      FROM tracked_cryptocurrencies AS tracked
+      INNER JOIN cryptocurrencies AS cryptocurrency
+        ON cryptocurrency.id = tracked.cryptocurrency_id
+      WHERE cryptocurrency.cmc_id = ?
+    `).get(quote.cmcId);
+    if (alreadyTracked) throw new DuplicateTrackingError();
+
+    let cryptocurrency = database.prepare(
+      "SELECT id FROM cryptocurrencies WHERE cmc_id = ?",
+    ).get(quote.cmcId);
+    let cryptocurrencyId: number;
+    if (cryptocurrency) {
+      cryptocurrencyId = Number(cryptocurrency.id);
+      database.prepare(`
+        UPDATE cryptocurrencies
+        SET symbol = ?, name = ?, last_updated_at = ?
+        WHERE id = ?
+      `).run(quote.symbol, quote.name, fetchedAt, cryptocurrencyId);
+    } else {
+      const inserted = database.prepare(`
+        INSERT INTO cryptocurrencies (cmc_id, symbol, name, last_updated_at)
+        VALUES (?, ?, ?, ?)
+      `).run(quote.cmcId, quote.symbol, quote.name, fetchedAt);
+      cryptocurrencyId = Number(inserted.lastInsertRowid);
+    }
+
+    const insertedTracking = database.prepare(`
+      INSERT INTO tracked_cryptocurrencies (cryptocurrency_id) VALUES (?)
+    `).run(cryptocurrencyId);
+    database.prepare(`
+      INSERT INTO price_history (cryptocurrency_id, price, fetched_at, provider_updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run(cryptocurrencyId, quote.price, fetchedAt, quote.providerUpdatedAt);
+
+    const tracked = getTrackedCryptocurrency(database, Number(insertedTracking.lastInsertRowid));
+    if (!tracked) throw new Error("Created tracking record could not be read");
+    database.exec("COMMIT");
+    return tracked;
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {}
+    throw error;
+  }
+}
+
+export function getCryptocurrencyHistory(
+  database: any,
+  cmcId: number,
+): PriceHistoryEntry[] | undefined {
+  const cryptocurrency = database.prepare(
+    "SELECT id FROM cryptocurrencies WHERE cmc_id = ?",
+  ).get(cmcId);
+  if (!cryptocurrency) return undefined;
+
+  return database.prepare(`
+    SELECT
+      history.id AS id,
+      cryptocurrency.cmc_id AS cmcId,
+      cryptocurrency.symbol AS symbol,
+      cryptocurrency.name AS name,
+      history.price AS price,
+      'USD' AS currency,
+      history.fetched_at AS fetchedAt,
+      history.provider_updated_at AS providerUpdatedAt
+    FROM price_history AS history
+    INNER JOIN cryptocurrencies AS cryptocurrency
+      ON cryptocurrency.id = history.cryptocurrency_id
+    WHERE cryptocurrency.cmc_id = ?
+    ORDER BY history.fetched_at, history.id
+  `).all(cmcId) as PriceHistoryEntry[];
 }
