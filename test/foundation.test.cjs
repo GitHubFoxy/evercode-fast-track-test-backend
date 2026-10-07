@@ -15,6 +15,8 @@ describe("GET /api/tracked-cryptocurrencies", () => {
     application = createApplication({
       apiToken: API_TOKEN,
       databasePath: path.join(directory, "service.sqlite"),
+      coinMarketCapApiKey: "fake-cmc-test-key",
+      coinMarketCapTimeoutMs: 10000,
     });
   });
 
