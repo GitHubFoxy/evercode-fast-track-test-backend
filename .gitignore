@@ -1,0 +1,23 @@
+# Секреты и локальные настройки
+.env
+.env.*
+!.env.example
+
+# Зависимости и результаты сборки
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# База данных и служебные файлы SQLite
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Логи и файлы ОС
+*.log
+.DS_Store
