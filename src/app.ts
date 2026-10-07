@@ -10,6 +10,7 @@ const {
   DuplicateTrackingError,
 } = require("./database");
 const { getUsdQuote, CoinMarketCapError } = require("./coinmarketcap");
+const { registerTrackingMutations } = require("./tracking");
 
 export interface ApplicationConfig {
   apiToken: string;
@@ -54,6 +55,7 @@ export function createApplication(config: ApplicationConfig): Application {
   });
 
   app.use(express.json({ limit: "16kb" }));
+  registerTrackingMutations(app, database, config);
 
   app.get("/api/tracked-cryptocurrencies", (_request: any, response: any) => {
     response.status(200).json(listTrackedCryptocurrencies(database));
