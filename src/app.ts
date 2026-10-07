@@ -54,9 +54,13 @@ export function createApplication(config: ApplicationConfig): Application {
   });
 
   app.use(express.json({ limit: "16kb" }));
+  require('./prices').registerPriceRoutes(app, database, config);
 
-  app.get("/api/tracked-cryptocurrencies", (_request: any, response: any) => {
-    response.status(200).json(listTrackedCryptocurrencies(database));
+  app.get("/api/tracked-cryptocurrencies", (request: any, response: any, next: any) => {
+    try {
+      const page = require('./query').parsePageQuery(request.query);
+      response.status(200).json(listTrackedCryptocurrencies(database, page));
+    } catch (error) { next(error); }
   });
 
   app.post("/api/tracked-cryptocurrencies", async (request: any, response: any, next: any) => {
@@ -108,6 +112,10 @@ export function createApplication(config: ApplicationConfig): Application {
   });
 
   app.get("/api/tracked-cryptocurrencies/:id", (request: any, response: any) => {
+    if (Object.keys(request.query).length) {
+      response.status(400).json({ error: { code: "INVALID_QUERY", message: "Query parameters are invalid" } });
+      return;
+    }
     if (!/^[1-9]\d*$/.test(request.params.id) || !Number.isSafeInteger(Number(request.params.id))) {
       response.status(400).json({
         error: { code: "INVALID_TRACKING_ID", message: "Tracking ID must be a positive integer" },
@@ -131,7 +139,8 @@ export function createApplication(config: ApplicationConfig): Application {
       });
       return;
     }
-    const history = getCryptocurrencyHistory(database, Number(request.params.cmcId));
+    const page = require('./query').parsePageQuery(request.query, true);
+    const history = getCryptocurrencyHistory(database, Number(request.params.cmcId), page);
     if (!history) {
       response.status(404).json({
         error: { code: "CRYPTOCURRENCY_NOT_FOUND", message: "Cryptocurrency was not found" },
@@ -151,6 +160,10 @@ export function createApplication(config: ApplicationConfig): Application {
   });
 
   app.use((error: any, _request: any, response: any, _next: any) => {
+    if (error instanceof require('./query').InvalidQueryError) {
+      response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
+      return;
+    }
     const isInvalidJson = error instanceof SyntaxError && "body" in error;
     if (isInvalidJson) {
       response.status(400).json({
