@@ -1,4 +1,4 @@
-const { getTrackedCryptocurrency, listTrackedCryptocurrencies, saveTrackedQuotes, StaleTrackingError } = require('./database');
+const { getTrackingSnapshot, listTrackedCryptocurrencies, saveTrackedQuotes, TrackingChangedError } = require('./database');
 const { getUsdQuotes, CoinMarketCapError } = require('./coinmarketcap');
 
 export function registerPriceRoutes(app: any, database: any, config: any): void {
@@ -12,19 +12,19 @@ export function registerPriceRoutes(app: any, database: any, config: any): void 
       response.status(400).json({ error: { code: 'INVALID_TRACKING_ID', message: 'Tracking ID must be a positive integer' } });
       return;
     }
-    const tracked = single ? getTrackedCryptocurrency(database, Number(request.params.id)) : undefined;
+    const tracked = single ? getTrackingSnapshot(database, Number(request.params.id)) : undefined;
     if (single && !tracked) {
       response.status(404).json({ error: { code: 'TRACKING_NOT_FOUND', message: 'Tracking record was not found' } });
       return;
     }
     try {
-      const snapshot = single ? [tracked] : listTrackedCryptocurrencies(database);
+      const snapshot = single ? [tracked] : listTrackedCryptocurrencies(database).map((item: any) => getTrackingSnapshot(database, item.id));
       const quotes = await getUsdQuotes({ apiKey: config.coinMarketCapApiKey,
         timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl }, snapshot.map((item: any) => item.cmcId));
       const saved = saveTrackedQuotes(database, snapshot, quotes, new Date().toISOString());
       response.status(200).json(single ? saved[0] : saved);
     } catch (error: any) {
-      if (error instanceof StaleTrackingError) {
+      if (error instanceof TrackingChangedError) {
         response.status(409).json({ error: { code: 'TRACKING_CHANGED', message: 'Tracking changed during the request' } });
       } else if (error instanceof CoinMarketCapError) {
         const timeout = error.kind === 'timeout';

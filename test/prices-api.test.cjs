@@ -37,6 +37,56 @@ describe('fresh prices and saved history HTTP API', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
+  test.each(['delete', 'replace', 'ABA', 'same coin'])('rejects an in-flight single price after %s without saving its old quote', async change => {
+    await add(1);
+    let release, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0 } })); entered(); };
+    const pending = get('/api/tracked-cryptocurrencies/1/price').then(response => response);
+    await started;
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0 } }));
+    if (change === 'delete') expect((await request(application.app).delete('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`)).status).toBe(204);
+    else {
+      const replace = id => request(application.app).put('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`).send({ cmcId: id });
+      expect((await replace(change === 'same coin' ? 1 : 2)).status).toBe(200);
+      if (change === 'ABA') expect((await replace(1)).status).toBe(200);
+    }
+    const before = (await get('/api/cryptocurrencies/1/history')).body;
+    release();
+    const result = await pending;
+    expect(result.status).toBe(409);
+    expect(result.body.error.code).toBe('TRACKING_CHANGED');
+    expect((await get('/api/cryptocurrencies/1/history')).body).toEqual(before);
+  });
+
+  test('rolls back the full price set when any tracking snapshot changes', async () => {
+    await add(1); await add(2);
+    let release, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0 } })); entered(); };
+    const pending = get('/api/prices').then(response => response);
+    await started;
+    await request(application.app).delete('/api/tracked-cryptocurrencies/2').set('Authorization', `Bearer ${TOKEN}`);
+    release();
+    expect((await pending).status).toBe(409);
+    for (const id of [1, 2]) expect((await get(`/api/cryptocurrencies/${id}/history`)).body.map(entry => entry.price)).toEqual([42]);
+  });
+
+  test('reads history offline after deletion and database reopening, and continues it on re-add', async () => {
+    await add(1);
+    const before = (await get('/api/cryptocurrencies/1/history')).body;
+    await request(application.app).delete('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`);
+    application.close();
+    application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY, coinMarketCapTimeoutMs: 100,
+      coinMarketCapBaseUrl: baseUrl, databasePath: path.join(directory, 'service.sqlite') });
+    respond = (_ids, outgoing) => { outgoing.statusCode = 503; outgoing.end('{}'); };
+    expect((await get('/api/cryptocurrencies/1/history')).body).toEqual(before);
+    expect(calls).toHaveLength(1);
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0 } }));
+    expect((await add(1)).status).toBe(201);
+    expect((await get('/api/cryptocurrencies/1/history')).body.map(entry => entry.price)).toEqual([42, 99]);
+  });
+
   test.each(['/api/prices?limit=1', '/api/tracked-cryptocurrencies/1/price?currency=EUR', '/api/tracked-cryptocurrencies/1?other=1'])('rejects unsupported query fields at %s before external requests', async route => {
     await add(1);
     calls.length = 0;
