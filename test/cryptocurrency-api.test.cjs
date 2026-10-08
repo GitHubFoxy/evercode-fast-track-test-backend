@@ -57,7 +57,7 @@ describe("tracked cryptocurrency API", () => {
     });
     await new Promise((resolve) => cmcServer.listen(0, "127.0.0.1", resolve));
     cmcBaseUrl = `http://127.0.0.1:${cmcServer.address().port}`;
-    application = createApplication({
+    application = createApplication({ quota: require('./fake-quota.cjs'),
       apiToken: API_TOKEN,
       databasePath: path.join(directory, "service.sqlite"),
       coinMarketCapApiKey: CMC_API_KEY,
@@ -224,7 +224,7 @@ describe("tracked cryptocurrency API", () => {
   });
 
   test("returns a safe not-found error for an unknown CoinMarketCap ID", async () => {
-    cmcResponse = { data: [], status: { error_code: 0, error_message: null } };
+    cmcResponse = { data: [], status: { error_code: 0, credit_count: 1, error_message: null } };
 
     const response = await request(application.app)
       .post("/api/tracked-cryptocurrencies")

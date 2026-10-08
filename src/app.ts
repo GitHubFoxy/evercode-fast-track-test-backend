@@ -18,11 +18,16 @@ export interface ApplicationConfig {
   coinMarketCapApiKey: string;
   coinMarketCapTimeoutMs: number;
   coinMarketCapBaseUrl?: string;
+  quota?: import('./budget').QuotaFallback;
+  clock?: { now: () => number; setTimeout?: (callback: () => any, delay: number) => any; clearTimeout?: (timer: any) => void };
+  syncIntervalMs?: number;
+  budget?: import('./budget').ProviderBudget;
+  batchSize?: number;
 }
 
 export interface Application {
   app: any;
-  close: () => void;
+  close: () => void | Promise<void>;
 }
 
 function matchesToken(supplied: string, expected: string): boolean {
@@ -35,6 +40,21 @@ function matchesToken(supplied: string, expected: string): boolean {
 export function createApplication(config: ApplicationConfig): Application {
   const database = openDatabase(config.databasePath);
   const app = express();
+  config = { ...config, budget: new (require('./budget').ProviderBudget)(database, config.clock?.now ?? Date.now, config.quota,
+    (signal: AbortSignal) => require('./coinmarketcap').transport({ apiKey: config.coinMarketCapApiKey,
+      timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl }, '/v1/key/info', signal)) };
+
+  const scheduler = require('./scheduler').createScheduler(database, config);
+  config.budget!.onChange = scheduler.changed;
+  let closed = false;
+  let closing: Promise<void> | undefined;
+  app.use((request: any, response: any, next: any) => {
+    if (closed) { response.status(503).json({ error: { code: 'STOPPING', message: 'Service is stopping' } }); return; }
+    response.on('finish', () => {
+      if (!closed && ['POST', 'PUT', 'DELETE'].includes(request.method) && response.statusCode >= 200 && response.statusCode < 300) scheduler.changed();
+    });
+    next();
+  });
 
   app.use("/api", (request: any, response: any, next: any) => {
     const authorization = request.get("authorization");
@@ -88,8 +108,9 @@ export function createApplication(config: ApplicationConfig): Application {
         apiKey: config.coinMarketCapApiKey,
         timeoutMs: config.coinMarketCapTimeoutMs,
         baseUrl: config.coinMarketCapBaseUrl,
+        budget: config.budget,
       }, body.cmcId);
-      const tracked = createTrackedCryptocurrencyWithQuote(database, quote, new Date().toISOString());
+      const tracked = createTrackedCryptocurrencyWithQuote(database, quote, new Date((config.clock?.now ?? Date.now)()).toISOString());
       response.status(201).json(tracked);
     } catch (error: any) {
       if (error instanceof DuplicateTrackingError) {
@@ -186,6 +207,14 @@ export function createApplication(config: ApplicationConfig): Application {
 
   return {
     app,
-    close: () => database.close(),
+    close: () => {
+      if (closed) return closing;
+      closed = true; scheduler.stop();
+      const busy = config.budget!.busy;
+      const drained = config.budget!.stop();
+      if (!busy) { database.close(); return; }
+      closing = drained.then(() => { database.close(); });
+      return closing;
+    },
   };
 }

@@ -45,9 +45,9 @@ export function registerTrackingMutations(app: any, database: any, config: Appli
       const quote = await getUsdQuote({
         apiKey: config.coinMarketCapApiKey,
         timeoutMs: config.coinMarketCapTimeoutMs,
-        baseUrl: config.coinMarketCapBaseUrl,
+        baseUrl: config.coinMarketCapBaseUrl, budget: config.budget, batchSize: config.batchSize,
       }, request.body.cmcId);
-      response.status(200).json(replaceTrackedCryptocurrencyWithQuote(database, snapshot, quote, new Date().toISOString()));
+      response.status(200).json(replaceTrackedCryptocurrencyWithQuote(database, snapshot, quote, new Date((config.clock?.now ?? Date.now)()).toISOString()));
     } catch (error: any) {
       if (error instanceof TrackingChangedError) {
         response.status(409).json({ error: { code: "TRACKING_CHANGED", message: "Tracking record changed while the request was in progress" } });

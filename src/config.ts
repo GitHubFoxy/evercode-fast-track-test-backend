@@ -6,6 +6,10 @@ export interface ServiceConfig {
   priceCurrency: "USD";
   coinMarketCapTimeoutMs: number;
   syncIntervalMs: number;
+  quota: import('./budget').QuotaFallback;
+  batchSize: number;
+  shutdownTimeoutMs: number;
+  coinMarketCapBaseUrl?: string;
 }
 
 export class ConfigurationError extends Error {
@@ -51,7 +55,29 @@ export function loadConfig(
     throw new ConfigurationError("DATABASE_PATH must point to a SQLite file on disk");
   }
 
+  const optional = (name: string, minimum = 0) => environment[name] === undefined ? undefined
+    : integer(environment, name, 0, minimum, Number.MAX_SAFE_INTEGER);
+  const quota = { monthlyLimit: optional('CMC_MONTHLY_LIMIT', 1), creditsLeft: optional('CMC_CREDITS_LEFT'),
+    resetAt: environment.CMC_RESET_AT, minuteLimit: optional('CMC_RATE_LIMIT_MINUTE', 1),
+    requestsLeft: optional('CMC_REQUESTS_LEFT'), keyInfoCredits: optional('CMC_KEY_INFO_CREDITS') };
+  // An old bootstrap must not prevent reopening a DB whose official period has advanced.
+  if (quota.resetAt !== undefined && !require('./coinmarketcap').isIsoTimestamp(quota.resetAt))
+    throw new ConfigurationError('CMC_RESET_AT must be an ISO timestamp');
+  if (quota.monthlyLimit !== undefined && quota.creditsLeft !== undefined && quota.creditsLeft > quota.monthlyLimit
+      || quota.minuteLimit !== undefined && quota.requestsLeft !== undefined && quota.requestsLeft > quota.minuteLimit)
+    throw new ConfigurationError('Quota remainder must not exceed its limit');
+  const coinMarketCapBaseUrl = environment.CMC_BASE_URL;
+  if (coinMarketCapBaseUrl !== undefined) {
+    let url: any;
+    try { url = new (require('node:url').URL)(coinMarketCapBaseUrl); } catch { throw new ConfigurationError('CMC_BASE_URL is invalid'); }
+    if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
+        !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+      throw new ConfigurationError('CMC_BASE_URL must use HTTPS or local loopback HTTP');
+  }
   return {
+    quota, coinMarketCapBaseUrl,
+    batchSize: integer(environment, 'CMC_BATCH_SIZE', 250, 1, 1000),
+    shutdownTimeoutMs: integer(environment, 'SHUTDOWN_TIMEOUT_MS', 10000, 1, 120000),
     apiToken: required(environment, "API_TOKEN"),
     coinMarketCapApiKey: required(environment, "COINMARKETCAP_API_KEY"),
     port: integer(environment, "PORT", 3000, 1, 65535),

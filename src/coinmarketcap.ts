@@ -21,6 +21,9 @@ export interface CoinMarketCapConfig {
   apiKey: string;
   timeoutMs: number;
   baseUrl?: string;
+  budget?: import('./budget').ProviderBudget;
+  background?: boolean;
+  batchSize?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -83,22 +86,37 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
 }
 
 async function requestQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Promise<unknown> {
+  if (config.budget) return config.budget.call(Math.ceil(cmcIds.length / 250), Boolean(config.background),
+    signal => transport(config, `/v3/cryptocurrency/quotes/latest?id=${cmcIds.join(',')}&convert=USD`, signal));
+  throw new CoinMarketCapError('provider-error');
+}
+
+export async function transport(config: CoinMarketCapConfig, endpoint: string, signal?: AbortSignal): Promise<any> {
   const baseUrl = (config.baseUrl ?? "https://pro-api.coinmarketcap.com").replace(/\/$/, "");
   let response: any;
   try {
     response = await axios.get(
-      `${baseUrl}/v3/cryptocurrency/quotes/latest?id=${cmcIds.join(',')}&convert=USD`,
+      `${baseUrl}${endpoint}`,
       {
         headers: { "X-CMC_PRO_API_KEY": config.apiKey },
         timeout: config.timeoutMs,
+        signal,
+        maxRedirects: 0,
       },
     );
   } catch (error: any) {
+    if (error?.response) {
+      const failure = new CoinMarketCapError(error.response.status === 400 ? 'unknown-id' : 'provider-error');
+      (failure as any).providerBody = error.response.data;
+      (failure as any).httpStatus = error.response.status;
+      const retry = error.response.headers?.['retry-after'];
+      const retryMs = typeof retry === 'string' && /^\d+$/.test(retry) ? Number(retry) * 1000
+        : typeof retry === 'string' ? Date.parse(retry) - Date.now() : NaN;
+      if (Number.isSafeInteger(retryMs) && retryMs >= 0) (failure as any).retryAfterMs = retryMs;
+      throw failure;
+    }
     if (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT") {
       throw new CoinMarketCapError("timeout");
-    }
-    if (error?.response?.status === 400) {
-      throw new CoinMarketCapError("unknown-id");
     }
     throw new CoinMarketCapError("provider-error");
   }
@@ -112,8 +130,9 @@ export async function getUsdQuote(config: CoinMarketCapConfig, cmcId: number): P
 // 250 is a credit tier, not a documented provider maximum.
 export async function getUsdQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Promise<UsdQuote[]> {
   const quotes: UsdQuote[] = [];
-  for (let offset = 0; offset < cmcIds.length; offset += 250) {
-    const batch = cmcIds.slice(offset, offset + 250);
+  const size = config.batchSize ?? 250;
+  for (let offset = 0; offset < cmcIds.length; offset += size) {
+    const batch = cmcIds.slice(offset, offset + size);
     const body = await requestQuotes(config, batch);
     for (const id of batch) quotes.push(parseQuote(body, id));
   }
