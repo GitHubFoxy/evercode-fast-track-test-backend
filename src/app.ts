@@ -74,7 +74,15 @@ export function createApplication(config: ApplicationConfig): Application {
     next();
   });
 
+  app.use('/api', (request: any, response: any, next: any) => {
+    if (['POST', 'PUT', 'DELETE'].includes(request.method) && Object.keys(request.query).length) {
+      response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: "16kb" }));
+  require('./documentation').registerDocumentation(app);
   require('./prices').registerPriceRoutes(app, database, config);
   registerTrackingMutations(app, database, config);
 
@@ -185,6 +193,10 @@ export function createApplication(config: ApplicationConfig): Application {
   app.use((error: any, _request: any, response: any, _next: any) => {
     if (error instanceof require('./query').InvalidQueryError) {
       response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
+      return;
+    }
+    if (error.type === 'entity.too.large') {
+      response.status(413).json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'JSON body exceeds 16 KiB' } });
       return;
     }
     const isInvalidJson = error instanceof SyntaxError && "body" in error;

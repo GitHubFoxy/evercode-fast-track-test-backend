@@ -4,15 +4,26 @@ services:
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
-      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
-      COINMARKETCAP_API_KEY: ${COINMARKETCAP_API_KEY:?Set COINMARKETCAP_API_KEY in .env}
-      PORT: "${PORT:-3000}"
-      DATABASE_PATH: /data/evercode.sqlite
-      PRICE_CURRENCY: ${PRICE_CURRENCY:-USD}
-      CMC_TIMEOUT_MS: ${CMC_TIMEOUT_MS:-10000}
-      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-60000}
+      - API_TOKEN=${API_TOKEN:?Set API_TOKEN in the explicit env file}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY:?Set COINMARKETCAP_API_KEY in the explicit env file}
+      - PORT=${PORT:-3000}
+      - DATABASE_PATH=/data/evercode.sqlite
+      - PRICE_CURRENCY=${PRICE_CURRENCY:-USD}
+      - CMC_TIMEOUT_MS=${CMC_TIMEOUT_MS:-10000}
+      - SYNC_INTERVAL_MS=${SYNC_INTERVAL_MS:-60000}
+      - CMC_BATCH_SIZE=${CMC_BATCH_SIZE:-250}
+      - SHUTDOWN_TIMEOUT_MS=${SHUTDOWN_TIMEOUT_MS:-10000}
+      # Bare names preserve absence: missing optional quota must not become an empty string.
+      - CMC_BASE_URL
+      - CMC_MONTHLY_LIMIT
+      - CMC_CREDITS_LEFT
+      - CMC_RESET_AT
+      - CMC_RATE_LIMIT_MINUTE
+      - CMC_REQUESTS_LEFT
+      - CMC_KEY_INFO_CREDITS
     volumes:
       - sqlite-data:/data
+    stop_grace_period: 125s
     restart: unless-stopped
 
 volumes:
