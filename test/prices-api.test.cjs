@@ -18,7 +18,7 @@ describe('fresh prices and saved history HTTP API', () => {
   beforeEach(async () => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-prices-'));
     calls = [];
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0, credit_count: 1 } }));
     server = http.createServer((incoming, outgoing) => {
       const url = new URL(incoming.url, 'http://localhost');
       calls.push({ ids: url.searchParams.get('id'), currency: url.searchParams.get('convert'), key: incoming.headers['x-cmc_pro_api_key'] });
@@ -27,7 +27,7 @@ describe('fresh prices and saved history HTTP API', () => {
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
-    application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY,
+    application = createApplication({ quota: require('./fake-quota.cjs'), apiToken: TOKEN, coinMarketCapApiKey: KEY,
       coinMarketCapTimeoutMs: 100, coinMarketCapBaseUrl: baseUrl,
       databasePath: path.join(directory, 'service.sqlite') });
   });
@@ -41,10 +41,10 @@ describe('fresh prices and saved history HTTP API', () => {
     await add(1);
     let release, entered;
     const started = new Promise(resolve => { entered = resolve; });
-    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0 } })); entered(); };
+    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0, credit_count: 1 } })); entered(); };
     const pending = get('/api/tracked-cryptocurrencies/1/price').then(response => response);
     await started;
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0, credit_count: 1 } }));
     if (change === 'delete') expect((await request(application.app).delete('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`)).status).toBe(204);
     else {
       const replace = id => request(application.app).put('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`).send({ cmcId: id });
@@ -63,7 +63,7 @@ describe('fresh prices and saved history HTTP API', () => {
     await add(1); await add(2);
     let release, entered;
     const started = new Promise(resolve => { entered = resolve; });
-    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0 } })); entered(); };
+    respond = (ids, outgoing) => { release = () => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 999)), status: { error_code: 0, credit_count: 1 } })); entered(); };
     const pending = get('/api/prices').then(response => response);
     await started;
     await request(application.app).delete('/api/tracked-cryptocurrencies/2').set('Authorization', `Bearer ${TOKEN}`);
@@ -77,12 +77,12 @@ describe('fresh prices and saved history HTTP API', () => {
     const before = (await get('/api/cryptocurrencies/1/history')).body;
     await request(application.app).delete('/api/tracked-cryptocurrencies/1').set('Authorization', `Bearer ${TOKEN}`);
     application.close();
-    application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY, coinMarketCapTimeoutMs: 100,
+    application = createApplication({ quota: require('./fake-quota.cjs'), apiToken: TOKEN, coinMarketCapApiKey: KEY, coinMarketCapTimeoutMs: 100,
       coinMarketCapBaseUrl: baseUrl, databasePath: path.join(directory, 'service.sqlite') });
     respond = (_ids, outgoing) => { outgoing.statusCode = 503; outgoing.end('{}'); };
     expect((await get('/api/cryptocurrencies/1/history')).body).toEqual(before);
     expect(calls).toHaveLength(1);
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0, credit_count: 1 } }));
     expect((await add(1)).status).toBe(201);
     expect((await get('/api/cryptocurrencies/1/history')).body.map(entry => entry.price)).toEqual([42, 99]);
   });
@@ -106,7 +106,7 @@ describe('fresh prices and saved history HTTP API', () => {
       if (mode === 'provider HTTP failure') { outgoing.statusCode = 429; outgoing.end(JSON.stringify({ secret: KEY })); }
       else if (mode === 'timeout') setTimeout(() => outgoing.end('{}'), 200);
       else if (mode === 'connection failure') outgoing.destroy();
-      else outgoing.end(JSON.stringify({ data: mode === 'missing quote' ? [] : ids.map(id => coin(id, -1)), status: { error_code: 0 } }));
+      else outgoing.end(JSON.stringify({ data: mode === 'missing quote' ? [] : ids.map(id => coin(id, -1)), status: { error_code: 0, credit_count: 1 } }));
     };
     for (const route of ['/api/tracked-cryptocurrencies/1/price', '/api/prices']) {
       const failed = await get(route);
@@ -120,11 +120,11 @@ describe('fresh prices and saved history HTTP API', () => {
   test('validates the entire multi-batch result before storing any observation', async () => {
     for (let id = 1; id <= 251; id++) expect((await add(id)).status).toBe(201);
     calls.length = 0;
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.length === 1 ? [] : ids.map(id => coin(id, 99)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.length === 1 ? [] : ids.map(id => coin(id, 99)), status: { error_code: 0, credit_count: 1 } }));
     expect((await get('/api/prices')).status).toBe(502);
     expect(calls.map(call => call.ids.split(',').length)).toEqual([250, 1]);
     expect((await get('/api/cryptocurrencies/1/history')).body.map(entry => entry.price)).toEqual([42]);
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0, credit_count: 1 } }));
     const fresh = await get('/api/prices');
     expect(fresh.status).toBe(200);
     expect(fresh.body).toHaveLength(251);
@@ -156,7 +156,7 @@ describe('fresh prices and saved history HTTP API', () => {
 
   test('rejects duplicate provider rows instead of selecting an arbitrary quote', async () => {
     await add(1);
-    respond = (_ids, outgoing) => outgoing.end(JSON.stringify({ data: [coin(1), coin(1, 100)], status: { error_code: 0 } }));
+    respond = (_ids, outgoing) => outgoing.end(JSON.stringify({ data: [coin(1), coin(1, 100)], status: { error_code: 0, credit_count: 1 } }));
     expect((await get('/api/prices')).status).toBe(502);
     expect((await get('/api/cryptocurrencies/1/history')).body).toHaveLength(1);
   });
@@ -205,7 +205,7 @@ describe('fresh prices and saved history HTTP API', () => {
 
   test('fetches a new USD price for one tracking record and appends its history', async () => {
     const created = await add(1);
-    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0 } }));
+    respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id, 99)), status: { error_code: 0, credit_count: 1 } }));
     const fresh = await get(`/api/tracked-cryptocurrencies/${created.body.id}/price`);
     expect(fresh.status).toBe(200);
     expect(fresh.body).toMatchObject({ cmcId: 1, name: 'Coin 1', symbol: 'C1', price: 99, currency: 'USD', providerUpdatedAt: timestamp });

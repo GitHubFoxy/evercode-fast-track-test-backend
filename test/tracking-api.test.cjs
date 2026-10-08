@@ -31,7 +31,7 @@ describe("tracking replacement and removal", () => {
     server = http.createServer((incoming, outgoing) => handler(incoming, outgoing));
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
-    application = createApplication({ apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
+    application = createApplication({ quota: require('./fake-quota.cjs'), apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
       coinMarketCapApiKey: "fake-key", coinMarketCapTimeoutMs: 1000, coinMarketCapBaseUrl: baseUrl });
   });
   afterEach(async () => {
@@ -59,7 +59,7 @@ describe("tracking replacement and removal", () => {
     expect((await tracked("get", btc.id)).status).toBe(404);
     expect(await history(1)).toEqual(before);
     application.close();
-    application = createApplication({ apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
+    application = createApplication({ quota: require('./fake-quota.cjs'), apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
       coinMarketCapApiKey: "fake-key", coinMarketCapTimeoutMs: 1000, coinMarketCapBaseUrl: baseUrl });
     const readded = await add(1);
     expect(readded.status).toBe(201);
@@ -214,9 +214,9 @@ describe("tracking replacement and removal", () => {
     const btc = (await add(1)).body;
     const before = await history(1);
     for (const [status, body, expected] of [
-      [200, { data: [], status: { error_code: 0 } }, 400],
+      [200, { data: [], status: { error_code: 0, credit_count: 1 } }, 400],
       [503, { error_message: "secret fake-key" }, 502],
-      [200, { data: [{ id: 1027 }], status: { error_code: 0 } }, 502],
+      [200, { data: [{ id: 1027 }], status: { error_code: 0, credit_count: 1 } }, 502],
     ]) {
       handler = (_incoming, outgoing) => {
         outgoing.writeHead(status, { "content-type": "application/json" });
@@ -287,7 +287,7 @@ describe("tracking replacement and removal", () => {
       INSERT INTO price_history VALUES (11, 7, 500, '2025-02-03T04:05:00.000Z', '2025-02-03T04:04:00.000Z');
     `);
     fixture.close();
-    application = createApplication({ apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
+    application = createApplication({ quota: require('./fake-quota.cjs'), apiToken: "test-token", databasePath: path.join(directory, "service.sqlite"),
       coinMarketCapApiKey: "fake-key", coinMarketCapTimeoutMs: 1000, coinMarketCapBaseUrl: baseUrl });
     expect((await tracked("get", 9)).body).toMatchObject({ id: 9, cmcId: 1, symbol: "BTC" });
     const before = await history(1);

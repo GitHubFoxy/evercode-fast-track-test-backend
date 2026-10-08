@@ -20,8 +20,8 @@ export function registerPriceRoutes(app: any, database: any, config: any): void 
     try {
       const snapshot = single ? [tracked] : listTrackedCryptocurrencies(database).map((item: any) => getTrackingSnapshot(database, item.id));
       const quotes = await getUsdQuotes({ apiKey: config.coinMarketCapApiKey,
-        timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl }, snapshot.map((item: any) => item.cmcId));
-      const saved = saveTrackedQuotes(database, snapshot, quotes, new Date().toISOString());
+        timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl, budget: config.budget, batchSize: config.batchSize }, snapshot.map((item: any) => item.cmcId));
+      const saved = saveTrackedQuotes(database, snapshot, quotes, new Date((config.clock?.now ?? Date.now)()).toISOString());
       response.status(200).json(single ? saved[0] : saved);
     } catch (error: any) {
       if (error instanceof TrackingChangedError) {
