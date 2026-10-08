@@ -74,12 +74,16 @@ export function loadConfig(
         !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
       throw new ConfigurationError('CMC_BASE_URL must use HTTPS or local loopback HTTP');
   }
+  const apiToken = required(environment, "API_TOKEN");
+  const coinMarketCapApiKey = required(environment, "COINMARKETCAP_API_KEY");
+  if (apiToken === coinMarketCapApiKey)
+    throw new ConfigurationError('API_TOKEN and COINMARKETCAP_API_KEY must differ');
   return {
     quota, coinMarketCapBaseUrl,
     batchSize: integer(environment, 'CMC_BATCH_SIZE', 250, 1, 1000),
     shutdownTimeoutMs: integer(environment, 'SHUTDOWN_TIMEOUT_MS', 10000, 1, 120000),
-    apiToken: required(environment, "API_TOKEN"),
-    coinMarketCapApiKey: required(environment, "COINMARKETCAP_API_KEY"),
+    apiToken,
+    coinMarketCapApiKey,
     port: integer(environment, "PORT", 3000, 1, 65535),
     databasePath,
     priceCurrency,

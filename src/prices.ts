@@ -1,3 +1,4 @@
+import { coinMarketCapHttpFailure } from './provider-error';
 const { getTrackingSnapshot, listTrackedCryptocurrencies, saveTrackedQuotes, TrackingChangedError } = require('./database');
 const { getUsdQuotes, CoinMarketCapError } = require('./coinmarketcap');
 
@@ -27,11 +28,8 @@ export function registerPriceRoutes(app: any, database: any, config: any): void 
       if (error instanceof TrackingChangedError) {
         response.status(409).json({ error: { code: 'TRACKING_CHANGED', message: 'Tracking changed during the request' } });
       } else if (error instanceof CoinMarketCapError) {
-        const timeout = error.kind === 'timeout';
-        response.status(timeout ? 504 : 502).json({ error: {
-          code: timeout ? 'CMC_TIMEOUT' : 'CMC_API_ERROR',
-          message: timeout ? 'CoinMarketCap request timed out' : 'CoinMarketCap request failed',
-        } });
+        const failure = coinMarketCapHttpFailure(error.kind);
+        response.status(failure.status).json({ error: { code: failure.code, message: failure.message } });
       } else next(error);
     }
   };

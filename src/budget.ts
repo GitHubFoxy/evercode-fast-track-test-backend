@@ -45,7 +45,7 @@ export class ProviderBudget {
   async reconcile(): Promise<void> {
     if (this.stopped) throw new CoinMarketCapError('provider-error');
     const expired = this.state() && Date.parse(this.state().resetAt) <= this.now();
-    if ((this.reconciled && !expired) || !this.keyInfo || this.fallback.keyInfoCredits === undefined) return;
+    if ((this.reconciled && !expired && !this.state()?.unconfirmed) || !this.keyInfo || this.fallback.keyInfoCredits === undefined) return;
     if (this.reconciling) return this.reconciling;
     this.reconciling = (async () => {
       const body = await this.execute(Math.max(this.fallback.keyInfoCredits!, this.state()?.keyInfoCost ?? 0), false, this.keyInfo!, true);

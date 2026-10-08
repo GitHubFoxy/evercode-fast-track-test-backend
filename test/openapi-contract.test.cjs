@@ -130,6 +130,14 @@ test.each([
   const response = await call(method, url); documented(response, route, method, status); expect(response.body.error.code).toBe(code);
 });
 
+test.each(operations.filter(([method]) => ['get', 'delete'].includes(method)))('documents unsupported body for %s %s', async (method, url, route) => {
+  await call('post', TRACKING).send({ cmcId: 1 });
+  const response = await call(method, url).send({ price: 999, enabled: true });
+  documented(response, route, method, 400);
+  expect(response.body.error.code).toBe('INVALID_BODY');
+  expect(spec.paths[route][method].requestBody).toBeUndefined();
+});
+
 test('documents duplicate, invalid body, unknown CMC ID and invalid JSON failures', async () => {
   await call('post', TRACKING).send({ cmcId: 1 });
   const duplicate = await call('post', TRACKING).send({ cmcId: 1 });

@@ -98,7 +98,7 @@ POST и PUT принимают строго `{"cmcId":1}`. ID — положит
 
 - Список и история: `limit` по умолчанию 50, диапазон 1–100; `offset` по умолчанию 0, неотрицательное безопасное целое. Ответ — массив без total/обёртки. Список сортируется по tracking ID.
 - История: дополнительные `from` и `to`, календарно корректные ISO-даты со временем, секундами и обязательным `Z`/`±HH:MM`; `from <= to`. Границы по `fetchedAt` включительные. Сортировка по `fetchedAt`, затем ID наблюдения, потом пагинация. Известная локальная монета без наблюдений возвращает `[]`; отсутствующая в локальном каталоге — 404.
-- Другие query-поля, повторные/структурированные query-значения и лишние поля тела запрещены. GET одной записи/цен и мутации не принимают query. JSON-тело ограничено 16 KiB.
+- Другие query-поля, повторные/структурированные query-значения и лишние поля тела запрещены. GET одной записи/цен и мутации не принимают query. GET/HEAD/DELETE под `/api` не принимают тело: положительный Content-Length или любой Transfer-Encoding дают `400 INVALID_BODY` независимо от Content-Type. DELETE без тела остаётся `204`. JSON-тело POST/PUT ограничено 16 KiB.
 - Замена BTC на ETH сохраняет историю BTC отдельно; DELETE также её не удаляет. Повторное добавление продолжает историю монеты с новым tracking ID. PUT той же монеты получает новую котировку. Устаревший результат запроса после удаления/замены записи не сохраняется.
 - Актуальные цены — **новый запрос** `/v3/cryptocurrency/quotes/latest` с CMC ID и `convert=USD`, без скрытого fallback к сохранённым ценам. Полный клиентский набор сохраняется атомарно; неполный ответ не выдаётся за успех.
 - Публичны `/docs`, `/openapi.json` и только три `/docs/assets/{asset}`: `swagger-ui.css`, `swagger-ui-bundle.js`, `swagger-ui-standalone-preset.js`. Нет произвольного static-каталога. Query документации запрещён.
@@ -134,7 +134,7 @@ curl --progress-bar -G http://localhost:3000/api/cryptocurrencies/1/history \
 
 | Статус | Машинные коды |
 | --- | --- |
-| 400 | `INVALID_JSON`, `INVALID_QUERY`, `INVALID_CMC_ID`, `INVALID_TRACKING_ID`, `CMC_ID_NOT_FOUND` (POST/PUT) |
+| 400 | `INVALID_JSON`, `INVALID_BODY`, `INVALID_QUERY`, `INVALID_CMC_ID`, `INVALID_TRACKING_ID`, `CMC_ID_NOT_FOUND` (POST/PUT) |
 | 401 | `UNAUTHORIZED`: нет токена, неверный токен или формат |
 | 404 | `TRACKING_NOT_FOUND`, `CRYPTOCURRENCY_NOT_FOUND`, `NOT_FOUND` |
 | 409 | `ALREADY_TRACKED`, `TRACKING_CHANGED` |

@@ -1,3 +1,4 @@
+import { coinMarketCapHttpFailure } from './provider-error';
 const express: any = require("express");
 const crypto: any = require("node:crypto");
 const {
@@ -79,6 +80,11 @@ export function createApplication(config: ApplicationConfig): Application {
       response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
       return;
     }
+    if (['GET', 'HEAD', 'DELETE'].includes(request.method)
+        && (Number(request.get('content-length')) > 0 || request.get('transfer-encoding') !== undefined)) {
+      response.status(400).json({ error: { code: 'INVALID_BODY', message: 'Request body is not supported' } });
+      return;
+    }
     next();
   });
   app.use(express.json({ limit: "16kb" }));
@@ -128,11 +134,7 @@ export function createApplication(config: ApplicationConfig): Application {
         return;
       }
       if (error instanceof CoinMarketCapError) {
-        const failure = error.kind === "unknown-id"
-          ? { status: 400, code: "CMC_ID_NOT_FOUND", message: "CoinMarketCap ID was not found" }
-          : error.kind === "timeout"
-            ? { status: 504, code: "CMC_TIMEOUT", message: "CoinMarketCap request timed out" }
-            : { status: 502, code: "CMC_API_ERROR", message: "CoinMarketCap request failed" };
+        const failure = coinMarketCapHttpFailure(error.kind, true);
         response.status(failure.status).json({
           error: { code: failure.code, message: failure.message },
         });

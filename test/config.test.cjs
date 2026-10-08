@@ -20,6 +20,15 @@ describe("service configuration", () => {
     expect(config.databasePath).toBe("./data/service.sqlite");
   });
 
+  test.each(['fake-shared-secret', '  fake-shared-secret  '])('rejects equal normalized API keys without exposing values (%s)', token => {
+    const environment = { ...validEnvironment, API_TOKEN: token, COINMARKETCAP_API_KEY: 'fake-shared-secret' };
+    expect(() => loadConfig(environment)).toThrow('API_TOKEN and COINMARKETCAP_API_KEY must differ');
+    try { loadConfig(environment); }
+    catch (error) {
+      expect(error.name).toBe('ConfigurationError');
+      expect(error.message).not.toContain('fake-shared-secret');
+    }
+  });
   test('parses verified bootstrap quota and rejects unsafe runtime values', () => {
     const env = { ...validEnvironment, CMC_MONTHLY_LIMIT: '100', CMC_CREDITS_LEFT: '90',
       CMC_RESET_AT: '2099-02-01T00:00:00Z', CMC_RATE_LIMIT_MINUTE: '10', CMC_REQUESTS_LEFT: '8',

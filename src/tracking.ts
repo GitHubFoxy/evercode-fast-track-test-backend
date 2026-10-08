@@ -1,3 +1,4 @@
+import { coinMarketCapHttpFailure } from './provider-error';
 const {
   getTrackingSnapshot,
   isCmcIdTracked,
@@ -58,11 +59,7 @@ export function registerTrackingMutations(app: any, database: any, config: Appli
         return;
       }
       if (error instanceof CoinMarketCapError) {
-        const failure = error.kind === "unknown-id"
-          ? { status: 400, code: "CMC_ID_NOT_FOUND", message: "CoinMarketCap ID was not found" }
-          : error.kind === "timeout"
-            ? { status: 504, code: "CMC_TIMEOUT", message: "CoinMarketCap request timed out" }
-            : { status: 502, code: "CMC_API_ERROR", message: "CoinMarketCap request failed" };
+        const failure = coinMarketCapHttpFailure(error.kind, true);
         response.status(failure.status).json({ error: { code: failure.code, message: failure.message } });
         return;
       }
