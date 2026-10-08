@@ -53,6 +53,45 @@ describe('shared persistent provider budget and runtime', () => {
     expect(calls).toHaveLength(4);
     expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(1);
   });
+  test.each(['client', 'background'])('invalid credit count recovers through budgeted reconciliation for %s quotes', async mode => {
+    let scheduled;
+    const clock = { now: () => now, setTimeout: (callback, delay) => { scheduled = { callback, at: now + delay }; return scheduled; },
+      clearTimeout: timer => { if (scheduled === timer) scheduled = undefined; } };
+    const tick = async () => {
+      expect(scheduled).toBeDefined();
+      expect(Number.isFinite(scheduled.at)).toBe(true);
+      expect(scheduled.at).toBeGreaterThan(now);
+      const timer = scheduled; now = timer.at; scheduled = undefined; await timer.callback();
+    };
+    reopen({ clock, syncIntervalMs: 60000, quota: { ...fallback, monthlyLimit: 7, creditsLeft: 7, keyInfoCredits: 1 } });
+    const normal = respond;
+    let invalid = false;
+    respond = (url, res) => {
+      if (url.pathname === '/v1/key/info') res.end(JSON.stringify({ status: { error_code: 0, credit_count: 1 }, data: {
+        plan: { credit_limit_monthly: 7, credit_limit_monthly_reset_timestamp: fallback.resetAt, rate_limit_minute: 1000 },
+        usage: { current_month: { credits_left: 7 }, current_minute: { requests_left: 1000 } }
+      } }));
+      else if (invalid) res.end(JSON.stringify({ status: { error_code: 0, credit_count: '1' }, data: [quote(1)] }));
+      else normal(url, res);
+    };
+    expect((await add(1)).status).toBe(201);
+    invalid = true;
+    if (mode === 'client') expect((await api('get', '/api/prices')).status).toBe(502);
+    else await tick();
+    expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(1);
+    invalid = false;
+    if (mode === 'client') expect((await api('get', '/api/prices')).status).toBe(200);
+    else await tick();
+    expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(2);
+    expect(calls.filter(url => url === '/v1/key/info')).toHaveLength(2);
+    await tick();
+    expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(3);
+    expect((await api('get', '/api/prices')).status).toBe(200);
+    expect((await api('get', '/api/prices')).status).toBe(502);
+    const before = calls.length;
+    await tick(); expect(calls).toHaveLength(before);
+    expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(4);
+  });
   test('official key info reconciles the bootstrap and consumes the shared allowance', async () => {
     reopen({ quota: { ...fallback, keyInfoCredits: 2 } });
     const normal = respond;

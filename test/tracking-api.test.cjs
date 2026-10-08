@@ -69,6 +69,64 @@ describe("tracking replacement and removal", () => {
     expect(continued[0]).toEqual(before[0]);
     expect(readded.body).not.toHaveProperty("enabled");
   });
+  test.each([
+    ['application/json', '{"price":999,"enabled":true}', false],
+    ['application/json', '{}', false],
+    ['application/json', '{', false],
+    ['text/plain', 'price=999', false],
+    ['application/octet-stream', 'price=999', false],
+    ['application/x-www-form-urlencoded', 'price=999&enabled=true', false],
+    [undefined, 'price=999', false],
+    ['text/plain', 'price=999', true],
+  ])('DELETE rejects any body (%s, %s, chunked=%s) without data loss or provider access', async (contentType, body, chunked) => {
+    const btc = (await add(1)).body;
+    const before = await history(1);
+    let calls = 0;
+    handler = (_incoming, outgoing) => { calls++; outgoing.end(JSON.stringify(quote(1))); };
+    let result;
+    if (chunked) {
+      const listener = application.app.listen(0, '127.0.0.1');
+      await new Promise(resolve => listener.once('listening', resolve));
+      try {
+        result = await new Promise((resolve, reject) => {
+          const call = http.request({ host: '127.0.0.1', port: listener.address().port, method: 'DELETE',
+            path: `/api/tracked-cryptocurrencies/${btc.id}`, headers: {
+              Authorization: 'Bearer test-token', 'Content-Type': contentType, 'Transfer-Encoding': 'chunked'
+            } }, response => {
+            let data = ''; response.on('data', chunk => { data += chunk; });
+            response.on('end', () => resolve({ status: response.statusCode, body: data ? JSON.parse(data) : {} }));
+          });
+          call.on('error', reject); call.write(body); call.end();
+        });
+      } finally { await new Promise(resolve => listener.close(resolve)); }
+    } else {
+      let call = tracked('delete', btc.id).send(body);
+      if (contentType) call = call.set('Content-Type', contentType);
+      else call = call.unset('Content-Type');
+      result = await call;
+    }
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ error: { code: 'INVALID_BODY', message: 'Request body is not supported' } });
+    expect((await tracked('get', btc.id)).body).toEqual(btc);
+    expect(await history(1)).toEqual(before);
+    expect(calls).toBe(0);
+    expect((await tracked('delete', btc.id)).status).toBe(204);
+    expect(await history(1)).toEqual(before);
+  });
+  test.each(['get', 'head'])('%s data routes reject bodies before quotes are requested', async method => {
+    const btc = (await add(1)).body;
+    const before = await history(1);
+    let calls = 0;
+    handler = (_incoming, outgoing) => { calls++; outgoing.end(JSON.stringify(quote(1))); };
+    for (const route of ['/api/tracked-cryptocurrencies', `/api/tracked-cryptocurrencies/${btc.id}`,
+      `/api/tracked-cryptocurrencies/${btc.id}/price`, '/api/prices', '/api/cryptocurrencies/1/history']) {
+      const result = await api(method, route).set('Content-Type', 'text/plain').set('Content-Length', '9').send('price=999');
+      expect(result.status).toBe(400);
+      if (method === 'get') expect(result.body.error.code).toBe('INVALID_BODY');
+    }
+    expect(calls).toBe(0);
+    expect(await history(1)).toEqual(before);
+  });
   test("PUT rejects an already tracked coin and leaves both histories and records unchanged", async () => {
     const btc = (await add(1)).body;
     const eth = (await add(1027)).body;
