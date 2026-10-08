@@ -1,12 +1,11 @@
 FROM node:18-bookworm-slim AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
-RUN npm run build && npm prune --omit=dev
+RUN npm run build && npm prune --omit=dev \
+    && node -e "const { SqliteDatabase } = require('./dist/database'); const db = new SqliteDatabase(':memory:'); db.prepare('SELECT 1').get(); db.close();"
 
 FROM node:18-bookworm-slim AS runtime
 ENV NODE_ENV=production \
