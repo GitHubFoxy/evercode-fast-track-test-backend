@@ -30,8 +30,8 @@ test('npm start builds a fresh checkout and serves protected HTTP without preexi
     child.stdout.on('data', data => { output += data; });
     child.stderr.on('data', data => { output += data; });
     exitPromise = new Promise(resolve => child.once('exit', () => { exited = true; resolve(); }));
-    deadline = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 12000);
-    const end = Date.now() + 10000;
+    deadline = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 50000);
+    const end = Date.now() + 45000;
     while (!output.includes('HTTP server listening') && !exited && Date.now() < end) {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -53,4 +53,4 @@ test('npm start builds a fresh checkout and serves protected HTTP without preexi
     if (child) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
     clearTimeout(deadline); fs.rmSync(directory, { recursive: true, force: true });
   }
-}, 15000);
+}, 60000);

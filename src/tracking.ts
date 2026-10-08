@@ -1,69 +1,65 @@
-import { coinMarketCapHttpFailure } from './provider-error';
-const {
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
+import {
   getTrackingSnapshot,
   isCmcIdTracked,
-  TrackingChangedError,
   replaceTrackedCryptocurrencyWithQuote,
   deleteTrackedCryptocurrency,
   DuplicateTrackingError,
-} = require("./database");
-const { getUsdQuote, CoinMarketCapError } = require("./coinmarketcap");
-import type { ApplicationConfig } from "./app";
+} from './database';
+import type { Database } from './database';
+import { getUsdQuote } from './coinmarketcap';
+import type { ApplicationConfig } from './app';
+import { sendDomainError, sendError } from './error-response';
 
-export function registerTrackingMutations(app: any, database: any, config: ApplicationConfig): void {
-  const validateTrackingId = (request: any, response: any, next: any) => {
-    if (!/^[1-9]\d*$/.test(request.params.id) || !Number.isSafeInteger(Number(request.params.id))) {
-      response.status(400).json({ error: { code: "INVALID_TRACKING_ID", message: "Tracking ID must be a positive integer" } });
+/** Returns the validated positive `cmcId` of a `{ "cmcId": n }` body, or undefined when the body is invalid. */
+export function parseCmcIdBody(body: unknown): number | undefined {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const keys = Object.keys(body);
+  const cmcId = (body as Record<string, unknown>).cmcId;
+  return keys.length === 1 && keys[0] === 'cmcId' && Number.isSafeInteger(cmcId) && (cmcId as number) > 0
+    ? cmcId as number : undefined;
+}
+
+export function isPositiveIntegerPath(value: string): boolean {
+  return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value));
+}
+
+export function registerTrackingMutations(app: Express, database: Database, config: ApplicationConfig): void {
+  const validateTrackingId: RequestHandler = (request, response, next) => {
+    if (!isPositiveIntegerPath(request.params.id as string)) {
+      sendError(response, 400, 'INVALID_TRACKING_ID', 'Tracking ID must be a positive integer');
       return;
     }
     next();
   };
-  app.delete("/api/tracked-cryptocurrencies/:id", validateTrackingId, (request: any, response: any) => {
+  app.delete('/api/tracked-cryptocurrencies/:id', validateTrackingId, (request: Request, response: Response) => {
     if (!deleteTrackedCryptocurrency(database, Number(request.params.id))) {
-      response.status(404).json({ error: { code: "TRACKING_NOT_FOUND", message: "Tracking record was not found" } });
+      sendError(response, 404, 'TRACKING_NOT_FOUND', 'Tracking record was not found');
       return;
     }
     response.status(204).end();
   });
-  app.put("/api/tracked-cryptocurrencies/:id", validateTrackingId, async (request: any, response: any, next: any) => {
-    const body = request.body;
-    if (!body || typeof body !== "object" || Array.isArray(body)
-        || Object.keys(body).length !== 1 || !Object.hasOwn(body, "cmcId")
-        || !Number.isSafeInteger(body.cmcId) || body.cmcId <= 0) {
-      response.status(400).json({ error: { code: "INVALID_CMC_ID", message: "A positive integer cmcId is required" } });
+  app.put('/api/tracked-cryptocurrencies/:id', validateTrackingId, async (request: Request, response: Response, next: NextFunction) => {
+    const cmcId = parseCmcIdBody(request.body);
+    if (cmcId === undefined) {
+      sendError(response, 400, 'INVALID_CMC_ID', 'A positive integer cmcId is required');
       return;
     }
     try {
-      const id = Number(request.params.id);
-      const snapshot = getTrackingSnapshot(database, id);
+      const snapshot = getTrackingSnapshot(database, Number(request.params.id));
       if (!snapshot) {
-        response.status(404).json({ error: { code: "TRACKING_NOT_FOUND", message: "Tracking record was not found" } });
+        sendError(response, 404, 'TRACKING_NOT_FOUND', 'Tracking record was not found');
         return;
       }
-      if (snapshot.cmcId !== body.cmcId && isCmcIdTracked(database, body.cmcId)) {
-        throw new DuplicateTrackingError();
-      }
+      if (snapshot.cmcId !== cmcId && isCmcIdTracked(database, cmcId)) throw new DuplicateTrackingError();
       const quote = await getUsdQuote({
         apiKey: config.coinMarketCapApiKey,
         timeoutMs: config.coinMarketCapTimeoutMs,
         baseUrl: config.coinMarketCapBaseUrl, budget: config.budget, batchSize: config.batchSize,
-      }, request.body.cmcId);
+      }, cmcId);
       response.status(200).json(replaceTrackedCryptocurrencyWithQuote(database, snapshot, quote, new Date((config.clock?.now ?? Date.now)()).toISOString()));
-    } catch (error: any) {
-      if (error instanceof TrackingChangedError) {
-        response.status(409).json({ error: { code: "TRACKING_CHANGED", message: "Tracking record changed while the request was in progress" } });
-        return;
-      }
-      if (error instanceof DuplicateTrackingError) {
-        response.status(409).json({ error: { code: "ALREADY_TRACKED", message: "Cryptocurrency is already tracked" } });
-        return;
-      }
-      if (error instanceof CoinMarketCapError) {
-        const failure = coinMarketCapHttpFailure(error.kind, true);
-        response.status(failure.status).json({ error: { code: failure.code, message: failure.message } });
-        return;
-      }
-      next(error);
+    } catch (error) {
+      if (!sendDomainError(response, error, true, 'Tracking record changed while the request was in progress')) next(error);
     }
   });
 }

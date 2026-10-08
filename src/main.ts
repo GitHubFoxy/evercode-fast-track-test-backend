@@ -1,5 +1,5 @@
-const { loadConfig } = require('./config');
-const { createApplication } = require('./app');
+import { loadConfig } from './config';
+import { createApplication } from './app';
 
 const config = loadConfig();
 const application = createApplication(config);

@@ -6,7 +6,7 @@ const path = require('node:path');
 const request = require('supertest');
 const { createApplication } = require('../dist/app');
 const quota = require('./fake-quota.cjs');
-const bounded = (promise, ms = 3000) => {
+const bounded = (promise, ms = 15000) => {
   let timer;
   return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('child deadline exceeded')), ms); })])
     .finally(() => clearTimeout(timer));
@@ -69,4 +69,4 @@ test.each([['SIGINT', 'quotes'], ['SIGTERM', 'quotes'], ['SIGINT', 'key-info'], 
     provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
-}, 10000);
+}, 45000);

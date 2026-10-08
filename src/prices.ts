@@ -1,36 +1,39 @@
-import { coinMarketCapHttpFailure } from './provider-error';
-const { getTrackingSnapshot, listTrackedCryptocurrencies, saveTrackedQuotes, TrackingChangedError } = require('./database');
-const { getUsdQuotes, CoinMarketCapError } = require('./coinmarketcap');
+import type { Express, NextFunction, Request, Response } from 'express';
+import { getTrackingSnapshot, listTrackedCryptocurrencies, saveTrackedQuotes } from './database';
+import type { Database, TrackingSnapshot } from './database';
+import { getUsdQuotes } from './coinmarketcap';
+import type { ApplicationConfig } from './app';
+import { sendDomainError, sendError } from './error-response';
 
-export function registerPriceRoutes(app: any, database: any, config: any): void {
-  const handler = async (request: any, response: any, next: any) => {
+export function registerPriceRoutes(app: Express, database: Database, config: ApplicationConfig): void {
+  const handler = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     if (Object.keys(request.query).length) {
-      response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
+      sendError(response, 400, 'INVALID_QUERY', 'Query parameters are invalid');
       return;
     }
-    const single = request.params.id !== undefined;
-    if (single && (!/^[1-9]\d*$/.test(request.params.id) || !Number.isSafeInteger(Number(request.params.id)))) {
-      response.status(400).json({ error: { code: 'INVALID_TRACKING_ID', message: 'Tracking ID must be a positive integer' } });
+    const rawId = request.params.id as string | undefined;
+    const single = rawId !== undefined;
+    if (single && (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(Number(rawId)))) {
+      sendError(response, 400, 'INVALID_TRACKING_ID', 'Tracking ID must be a positive integer');
       return;
     }
-    const tracked = single ? getTrackingSnapshot(database, Number(request.params.id)) : undefined;
+    const tracked = single ? getTrackingSnapshot(database, Number(rawId)) : undefined;
     if (single && !tracked) {
-      response.status(404).json({ error: { code: 'TRACKING_NOT_FOUND', message: 'Tracking record was not found' } });
+      sendError(response, 404, 'TRACKING_NOT_FOUND', 'Tracking record was not found');
       return;
     }
     try {
-      const snapshot = single ? [tracked] : listTrackedCryptocurrencies(database).map((item: any) => getTrackingSnapshot(database, item.id));
+      const snapshot: TrackingSnapshot[] = tracked ? [tracked]
+        : listTrackedCryptocurrencies(database)
+          .map(item => getTrackingSnapshot(database, item.id))
+          .filter((item): item is TrackingSnapshot => item !== undefined);
       const quotes = await getUsdQuotes({ apiKey: config.coinMarketCapApiKey,
-        timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl, budget: config.budget, batchSize: config.batchSize }, snapshot.map((item: any) => item.cmcId));
+        timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl, budget: config.budget,
+        batchSize: config.batchSize }, snapshot.map(item => item.cmcId));
       const saved = saveTrackedQuotes(database, snapshot, quotes, new Date((config.clock?.now ?? Date.now)()).toISOString());
       response.status(200).json(single ? saved[0] : saved);
-    } catch (error: any) {
-      if (error instanceof TrackingChangedError) {
-        response.status(409).json({ error: { code: 'TRACKING_CHANGED', message: 'Tracking changed during the request' } });
-      } else if (error instanceof CoinMarketCapError) {
-        const failure = coinMarketCapHttpFailure(error.kind);
-        response.status(failure.status).json({ error: { code: failure.code, message: failure.message } });
-      } else next(error);
+    } catch (error) {
+      if (!sendDomainError(response, error, false, 'Tracking changed during the request')) next(error);
     }
   };
   app.get('/api/tracked-cryptocurrencies/:id/price', handler);

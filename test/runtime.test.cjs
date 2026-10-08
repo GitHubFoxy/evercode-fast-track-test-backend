@@ -339,7 +339,16 @@ describe('shared persistent provider budget and runtime', () => {
     expect(calls.filter(url => url === '/v1/key/info')).toHaveLength(2);
     expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(3);
   });
-  test('unknown quotas deny external calls while local reads remain available', async () => {
+  test('without any configured quota the provider enforces its own limits', async () => {
+    expect((await add(1)).status).toBe(201);
+    expect((await api('get', '/api/prices')).status).toBe(200);
+    expect(calls.map(url => url.split('?')[0])).toEqual(['/v3/cryptocurrency/quotes/latest', '/v3/cryptocurrency/quotes/latest']);
+    respond = (_url, res) => { res.statusCode = 429; res.end(JSON.stringify({ status: { error_code: 1008 } })); };
+    expect((await api('get', '/api/prices')).status).toBe(502);
+    expect((await api('get', '/api/tracked-cryptocurrencies')).body).toHaveLength(1);
+  });
+  test('a partial quota is a configuration mistake: external calls are denied, local reads remain available', async () => {
+    reopen({ quota: { monthlyLimit: 10, creditsLeft: 10 } });
     expect((await add(1)).status).toBe(502);
     expect((await api('get', '/api/tracked-cryptocurrencies')).body).toEqual([]);
     expect(calls).toEqual([]);

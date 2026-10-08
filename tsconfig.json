@@ -3,13 +3,16 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "esModuleInterop": true,
     "rootDir": "src",
     "outDir": "dist",
     "strict": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
-    "types": [],
+    "types": ["node"],
     "lib": ["ES2022"],
     "noEmitOnError": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.ts"]
 }

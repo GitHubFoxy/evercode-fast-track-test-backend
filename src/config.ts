@@ -1,3 +1,7 @@
+import { URL } from "node:url";
+import type { QuotaFallback } from "./budget";
+import { isIsoTimestamp } from "./coinmarketcap";
+
 export interface ServiceConfig {
   apiToken: string;
   coinMarketCapApiKey: string;
@@ -6,7 +10,7 @@ export interface ServiceConfig {
   priceCurrency: "USD";
   coinMarketCapTimeoutMs: number;
   syncIntervalMs: number;
-  quota: import('./budget').QuotaFallback;
+  quota: QuotaFallback;
   batchSize: number;
   shutdownTimeoutMs: number;
   coinMarketCapBaseUrl?: string;
@@ -57,19 +61,19 @@ export function loadConfig(
 
   const optional = (name: string, minimum = 0) => environment[name] === undefined ? undefined
     : integer(environment, name, 0, minimum, Number.MAX_SAFE_INTEGER);
-  const quota = { monthlyLimit: optional('CMC_MONTHLY_LIMIT', 1), creditsLeft: optional('CMC_CREDITS_LEFT'),
+  const quota: QuotaFallback = { monthlyLimit: optional('CMC_MONTHLY_LIMIT', 1), creditsLeft: optional('CMC_CREDITS_LEFT'),
     resetAt: environment.CMC_RESET_AT, minuteLimit: optional('CMC_RATE_LIMIT_MINUTE', 1),
     requestsLeft: optional('CMC_REQUESTS_LEFT'), keyInfoCredits: optional('CMC_KEY_INFO_CREDITS') };
   // An old bootstrap must not prevent reopening a DB whose official period has advanced.
-  if (quota.resetAt !== undefined && !require('./coinmarketcap').isIsoTimestamp(quota.resetAt))
+  if (quota.resetAt !== undefined && !isIsoTimestamp(quota.resetAt))
     throw new ConfigurationError('CMC_RESET_AT must be an ISO timestamp');
   if (quota.monthlyLimit !== undefined && quota.creditsLeft !== undefined && quota.creditsLeft > quota.monthlyLimit
       || quota.minuteLimit !== undefined && quota.requestsLeft !== undefined && quota.requestsLeft > quota.minuteLimit)
     throw new ConfigurationError('Quota remainder must not exceed its limit');
   const coinMarketCapBaseUrl = environment.CMC_BASE_URL;
   if (coinMarketCapBaseUrl !== undefined) {
-    let url: any;
-    try { url = new (require('node:url').URL)(coinMarketCapBaseUrl); } catch { throw new ConfigurationError('CMC_BASE_URL is invalid'); }
+    let url: URL;
+    try { url = new URL(coinMarketCapBaseUrl); } catch { throw new ConfigurationError('CMC_BASE_URL is invalid'); }
     if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
         !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
       throw new ConfigurationError('CMC_BASE_URL must use HTTPS or local loopback HTTP');

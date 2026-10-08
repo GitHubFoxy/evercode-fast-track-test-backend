@@ -1,17 +1,29 @@
-import { coinMarketCapHttpFailure } from './provider-error';
-const express: any = require("express");
-const crypto: any = require("node:crypto");
-const {
+import crypto from 'node:crypto';
+import express from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
+import {
   openDatabase,
   listTrackedCryptocurrencies,
   isCmcIdTracked,
   getTrackedCryptocurrency,
   createTrackedCryptocurrencyWithQuote,
   getCryptocurrencyHistory,
-  DuplicateTrackingError,
-} = require("./database");
-const { getUsdQuote, CoinMarketCapError } = require("./coinmarketcap");
-const { registerTrackingMutations } = require("./tracking");
+} from './database';
+import { ProviderBudget } from './budget';
+import type { QuotaFallback } from './budget';
+import { getUsdQuote, transport } from './coinmarketcap';
+import { registerDocumentation } from './documentation';
+import { sendDomainError, sendError } from './error-response';
+import { InvalidQueryError, parsePageQuery } from './query';
+import { registerPriceRoutes } from './prices';
+import { createScheduler } from './scheduler';
+import { isPositiveIntegerPath, parseCmcIdBody, registerTrackingMutations } from './tracking';
+
+export interface ClockConfig {
+  now: () => number;
+  setTimeout?: (callback: () => void, delay: number) => NodeJS.Timeout;
+  clearTimeout?: (timer: NodeJS.Timeout) => void;
+}
 
 export interface ApplicationConfig {
   apiToken: string;
@@ -19,17 +31,19 @@ export interface ApplicationConfig {
   coinMarketCapApiKey: string;
   coinMarketCapTimeoutMs: number;
   coinMarketCapBaseUrl?: string;
-  quota?: import('./budget').QuotaFallback;
-  clock?: { now: () => number; setTimeout?: (callback: () => any, delay: number) => any; clearTimeout?: (timer: any) => void };
+  quota?: QuotaFallback;
+  clock?: ClockConfig;
   syncIntervalMs?: number;
-  budget?: import('./budget').ProviderBudget;
+  budget?: ProviderBudget;
   batchSize?: number;
 }
 
 export interface Application {
-  app: any;
+  app: Express;
   close: () => void | Promise<void>;
 }
+
+const MUTATING_METHODS = ['POST', 'PUT', 'DELETE'];
 
 function matchesToken(supplied: string, expected: string): boolean {
   const suppliedBytes = Buffer.from(supplied);
@@ -38,185 +52,129 @@ function matchesToken(supplied: string, expected: string): boolean {
     && crypto.timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
-export function createApplication(config: ApplicationConfig): Application {
-  const database = openDatabase(config.databasePath);
+export function createApplication(input: ApplicationConfig): Application {
+  const database = openDatabase(input.databasePath);
   const app = express();
-  config = { ...config, budget: new (require('./budget').ProviderBudget)(database, config.clock?.now ?? Date.now, config.quota,
-    (signal: AbortSignal) => require('./coinmarketcap').transport({ apiKey: config.coinMarketCapApiKey,
-      timeoutMs: config.coinMarketCapTimeoutMs, baseUrl: config.coinMarketCapBaseUrl }, '/v1/key/info', signal)) };
+  const budget = new ProviderBudget(database, input.clock?.now ?? Date.now, input.quota,
+    signal => transport({ apiKey: input.coinMarketCapApiKey, timeoutMs: input.coinMarketCapTimeoutMs,
+      baseUrl: input.coinMarketCapBaseUrl }, '/v1/key/info', signal));
+  const config: ApplicationConfig = { ...input, budget };
+  const now = config.clock?.now ?? Date.now;
 
-  const scheduler = require('./scheduler').createScheduler(database, config);
-  config.budget!.onChange = scheduler.changed;
+  const scheduler = createScheduler(database, config);
+  budget.onChange = scheduler.changed;
   let closed = false;
   let closing: Promise<void> | undefined;
-  app.use((request: any, response: any, next: any) => {
-    if (closed) { response.status(503).json({ error: { code: 'STOPPING', message: 'Service is stopping' } }); return; }
+  app.use((request: Request, response: Response, next: NextFunction) => {
+    if (closed) { sendError(response, 503, 'STOPPING', 'Service is stopping'); return; }
     response.on('finish', () => {
-      if (!closed && ['POST', 'PUT', 'DELETE'].includes(request.method) && response.statusCode >= 200 && response.statusCode < 300) scheduler.changed();
+      if (!closed && MUTATING_METHODS.includes(request.method) && response.statusCode >= 200 && response.statusCode < 300) scheduler.changed();
     });
     next();
   });
 
-  app.use("/api", (request: any, response: any, next: any) => {
-    const authorization = request.get("authorization");
-    const match = typeof authorization === "string"
-      ? /^Bearer ([^\s]+)$/.exec(authorization)
-      : null;
-
+  app.use('/api', (request: Request, response: Response, next: NextFunction) => {
+    const authorization = request.get('authorization');
+    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
     if (!match || !matchesToken(match[1], config.apiToken)) {
-      response.status(401).json({
-        error: {
-          code: "UNAUTHORIZED",
-          message: "Authentication required",
-        },
-      });
+      sendError(response, 401, 'UNAUTHORIZED', 'Authentication required');
       return;
     }
     next();
   });
 
-  app.use('/api', (request: any, response: any, next: any) => {
-    if (['POST', 'PUT', 'DELETE'].includes(request.method) && Object.keys(request.query).length) {
-      response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
+  app.use('/api', (request: Request, response: Response, next: NextFunction) => {
+    if (MUTATING_METHODS.includes(request.method) && Object.keys(request.query).length) {
+      sendError(response, 400, 'INVALID_QUERY', 'Query parameters are invalid');
       return;
     }
     if (['GET', 'HEAD', 'DELETE'].includes(request.method)
         && (Number(request.get('content-length')) > 0 || request.get('transfer-encoding') !== undefined)) {
-      response.status(400).json({ error: { code: 'INVALID_BODY', message: 'Request body is not supported' } });
+      sendError(response, 400, 'INVALID_BODY', 'Request body is not supported');
       return;
     }
     next();
   });
-  app.use(express.json({ limit: "16kb" }));
-  require('./documentation').registerDocumentation(app);
-  require('./prices').registerPriceRoutes(app, database, config);
+  app.use(express.json({ limit: '16kb' }));
+  registerDocumentation(app);
+  registerPriceRoutes(app, database, config);
   registerTrackingMutations(app, database, config);
 
-  app.get("/api/tracked-cryptocurrencies", (request: any, response: any, next: any) => {
+  app.get('/api/tracked-cryptocurrencies', (request: Request, response: Response, next: NextFunction) => {
     try {
-      const page = require('./query').parsePageQuery(request.query);
-      response.status(200).json(listTrackedCryptocurrencies(database, page));
+      response.status(200).json(listTrackedCryptocurrencies(database, parsePageQuery(request.query)));
     } catch (error) { next(error); }
   });
 
-  app.post("/api/tracked-cryptocurrencies", async (request: any, response: any, next: any) => {
-    const body = request.body;
-    if (!body || typeof body !== "object" || Array.isArray(body)
-        || Object.keys(body).length !== 1 || !Object.hasOwn(body, "cmcId")
-        || !Number.isSafeInteger(body.cmcId) || body.cmcId <= 0) {
-      response.status(400).json({
-        error: { code: "INVALID_CMC_ID", message: "A positive integer cmcId is required" },
-      });
+  app.post('/api/tracked-cryptocurrencies', async (request: Request, response: Response, next: NextFunction) => {
+    const cmcId = parseCmcIdBody(request.body);
+    if (cmcId === undefined) {
+      sendError(response, 400, 'INVALID_CMC_ID', 'A positive integer cmcId is required');
       return;
     }
-
     try {
-      if (isCmcIdTracked(database, body.cmcId)) {
-        response.status(409).json({
-          error: { code: "ALREADY_TRACKED", message: "Cryptocurrency is already tracked" },
-        });
+      if (isCmcIdTracked(database, cmcId)) {
+        sendError(response, 409, 'ALREADY_TRACKED', 'Cryptocurrency is already tracked');
         return;
       }
-
       const quote = await getUsdQuote({
         apiKey: config.coinMarketCapApiKey,
         timeoutMs: config.coinMarketCapTimeoutMs,
         baseUrl: config.coinMarketCapBaseUrl,
         budget: config.budget,
-      }, body.cmcId);
-      const tracked = createTrackedCryptocurrencyWithQuote(database, quote, new Date((config.clock?.now ?? Date.now)()).toISOString());
-      response.status(201).json(tracked);
-    } catch (error: any) {
-      if (error instanceof DuplicateTrackingError) {
-        response.status(409).json({
-          error: { code: "ALREADY_TRACKED", message: "Cryptocurrency is already tracked" },
-        });
-        return;
-      }
-      if (error instanceof CoinMarketCapError) {
-        const failure = coinMarketCapHttpFailure(error.kind, true);
-        response.status(failure.status).json({
-          error: { code: failure.code, message: failure.message },
-        });
-        return;
-      }
-      next(error);
+      }, cmcId);
+      response.status(201).json(createTrackedCryptocurrencyWithQuote(database, quote, new Date(now()).toISOString()));
+    } catch (error) {
+      if (!sendDomainError(response, error, true, 'Tracking record changed while the request was in progress')) next(error);
     }
   });
 
-  app.get("/api/tracked-cryptocurrencies/:id", (request: any, response: any) => {
+  app.get('/api/tracked-cryptocurrencies/:id', (request: Request, response: Response) => {
     if (Object.keys(request.query).length) {
-      response.status(400).json({ error: { code: "INVALID_QUERY", message: "Query parameters are invalid" } });
+      sendError(response, 400, 'INVALID_QUERY', 'Query parameters are invalid');
       return;
     }
-    if (!/^[1-9]\d*$/.test(request.params.id) || !Number.isSafeInteger(Number(request.params.id))) {
-      response.status(400).json({
-        error: { code: "INVALID_TRACKING_ID", message: "Tracking ID must be a positive integer" },
-      });
+    if (!isPositiveIntegerPath(request.params.id as string)) {
+      sendError(response, 400, 'INVALID_TRACKING_ID', 'Tracking ID must be a positive integer');
       return;
     }
     const tracked = getTrackedCryptocurrency(database, Number(request.params.id));
     if (!tracked) {
-      response.status(404).json({
-        error: { code: "TRACKING_NOT_FOUND", message: "Tracking record was not found" },
-      });
+      sendError(response, 404, 'TRACKING_NOT_FOUND', 'Tracking record was not found');
       return;
     }
     response.status(200).json(tracked);
   });
 
-  app.get("/api/cryptocurrencies/:cmcId/history", (request: any, response: any) => {
-    if (!/^[1-9]\d*$/.test(request.params.cmcId) || !Number.isSafeInteger(Number(request.params.cmcId))) {
-      response.status(400).json({
-        error: { code: "INVALID_CMC_ID", message: "CMC ID must be a positive integer" },
-      });
+  app.get('/api/cryptocurrencies/:cmcId/history', (request: Request, response: Response, next: NextFunction) => {
+    if (!isPositiveIntegerPath(request.params.cmcId as string)) {
+      sendError(response, 400, 'INVALID_CMC_ID', 'CMC ID must be a positive integer');
       return;
     }
-    const page = require('./query').parsePageQuery(request.query, true);
-    const history = getCryptocurrencyHistory(database, Number(request.params.cmcId), page);
-    if (!history) {
-      response.status(404).json({
-        error: { code: "CRYPTOCURRENCY_NOT_FOUND", message: "Cryptocurrency was not found" },
-      });
-      return;
-    }
-    response.status(200).json(history);
+    try {
+      const history = getCryptocurrencyHistory(database, Number(request.params.cmcId), parsePageQuery(request.query, true));
+      if (!history) {
+        sendError(response, 404, 'CRYPTOCURRENCY_NOT_FOUND', 'Cryptocurrency was not found');
+        return;
+      }
+      response.status(200).json(history);
+    } catch (error) { next(error); }
   });
 
-  app.use((_request: any, response: any) => {
-    response.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Resource not found",
-      },
-    });
+  app.use((_request: Request, response: Response) => {
+    sendError(response, 404, 'NOT_FOUND', 'Resource not found');
   });
 
-  app.use((error: any, _request: any, response: any, _next: any) => {
-    if (error instanceof require('./query').InvalidQueryError) {
-      response.status(400).json({ error: { code: 'INVALID_QUERY', message: 'Query parameters are invalid' } });
-      return;
+  app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+    if (error instanceof InvalidQueryError) {
+      sendError(response, 400, 'INVALID_QUERY', 'Query parameters are invalid');
+    } else if (typeof error === 'object' && error !== null && (error as { type?: unknown }).type === 'entity.too.large') {
+      sendError(response, 413, 'PAYLOAD_TOO_LARGE', 'JSON body exceeds 16 KiB');
+    } else if (error instanceof SyntaxError && 'body' in error) {
+      sendError(response, 400, 'INVALID_JSON', 'Request body must contain valid JSON');
+    } else {
+      sendError(response, 500, 'INTERNAL_ERROR', 'An internal error occurred');
     }
-    if (error.type === 'entity.too.large') {
-      response.status(413).json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'JSON body exceeds 16 KiB' } });
-      return;
-    }
-    const isInvalidJson = error instanceof SyntaxError && "body" in error;
-    if (isInvalidJson) {
-      response.status(400).json({
-        error: {
-          code: "INVALID_JSON",
-          message: "Request body must contain valid JSON",
-        },
-      });
-      return;
-    }
-    response.status(500).json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "An internal error occurred",
-      },
-    });
   });
 
   return {
@@ -224,8 +182,8 @@ export function createApplication(config: ApplicationConfig): Application {
     close: () => {
       if (closed) return closing;
       closed = true; scheduler.stop();
-      const busy = config.budget!.busy;
-      const drained = config.budget!.stop();
+      const busy = budget.busy;
+      const drained = budget.stop();
       if (!busy) { database.close(); return; }
       closing = drained.then(() => { database.close(); });
       return closing;

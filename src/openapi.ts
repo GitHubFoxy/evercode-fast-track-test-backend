@@ -1,5 +1,11 @@
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+interface Operation { summary: string; responses: Record<string, Json>; [key: string]: Json | undefined }
+interface PathItem { get?: Operation; head?: Operation; [method: string]: Operation | undefined }
+interface OpenApiDocument { paths: Record<string, PathItem>; [key: string]: Json | Record<string, PathItem> }
+
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
-const json = (schema: any) => ({ 'application/json': { schema } });
+const json = (schema: Json) => ({ 'application/json': { schema } });
 const array = (name: string) => ({ type: 'array', items: ref(name) });
 const id = { type: 'integer', minimum: 1, maximum: 9007199254740991 };
 const timestamp = { type: 'string', format: 'date-time' };
@@ -22,22 +28,22 @@ const provider = {
 const conflict = error('Duplicate cryptocurrency or tracking snapshot changed during request.', ['ALREADY_TRACKED', 'TRACKING_CHANGED']);
 const missingTracking = error('Unknown local tracking record.', ['TRACKING_NOT_FOUND']);
 const bad = (...codes: string[]) => error('Invalid input; unsupported fields, repeated/structured query values and malformed JSON are rejected.', [...codes, 'INVALID_JSON']);
-const success = (schema: any, description = 'Success') => ({ description, content: json(schema) });
+const success = (schema: Json, description = 'Success') => ({ description, content: json(schema) });
 const pathId = (name: string, description: string) => ({ name, in: 'path', required: true, description: `${description} Decimal digits without leading zero; positive safe integer.`, schema: id });
 const page = [
   { name: 'limit', in: 'query', description: 'Decimal integer; default 50. Unknown query fields are rejected.', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
   { name: 'offset', in: 'query', description: 'Decimal nonnegative safe integer; default 0.', schema: { type: 'integer', minimum: 0, maximum: 9007199254740991, default: 0 } },
 ];
 const body = { required: true, content: json(ref('TrackingInput')) };
-const operation = (summary: string, responses: any, parameters: any[] = [], requestBody?: any) => ({ summary,
+const operation = (summary: string, responses: Record<string, Json>, parameters: Json[] = [], requestBody?: Json) => ({ summary,
   parameters, ...(requestBody ? { requestBody } : {}), responses: { ...common, ...responses } });
-const publicOperation = (summary: string, content: any) => ({ summary, security: [], responses: {
+const publicOperation = (summary: string, content: Json) => ({ summary, security: [], responses: {
   '200': { description: 'Public documentation; no configured credentials.', content },
   '400': bad('INVALID_QUERY'), '404': error('Unknown resource or unsupported method.', ['NOT_FOUND']),
   '413': common['413'], '500': common['500'], '503': common['503'],
 } });
 
-export const openapi: any = {
+export const openapi: OpenApiDocument = {
   openapi: '3.0.3',
   info: { title: 'Cryptocurrency tracking API', version: '1.0.0', description:
     'Single-process USD service. All /api routes require a separate service Bearer token. IDs of tracking records, cryptocurrencies (CMC) and observations are distinct. Unknown paths/methods return 404 NOT_FOUND (401 first under /api without valid authorization). All routes may return 503 STOPPING during shutdown. GET routes also support HEAD with the same status and headers but no body. Express accepts a trailing slash. No health endpoint. JSON body limit: 16 KiB. GET/HEAD/DELETE under /api accept no request body: positive Content-Length or any Transfer-Encoding is rejected with 400 INVALID_BODY regardless of Content-Type. No manual price/history mutation.' },
@@ -120,10 +126,12 @@ export const openapi: any = {
   },
 };
 // Express provides HEAD for every GET. Publish its bodyless contract explicitly.
-for (const path of Object.values(openapi.paths) as any[]) {
-  if (path.get) {
-    path.get.responses['304'] = { description: 'Matching If-None-Match ETag; no response body.' };
-    path.head = { ...path.get, summary: `HEAD: ${path.get.summary}`,
-      responses: Object.fromEntries(Object.entries(path.get.responses).map(([status, response]: [string, any]) => [status, { description: response.description }])) };
+for (const item of Object.values(openapi.paths)) {
+  const get = item.get;
+  if (get) {
+    get.responses['304'] = { description: 'Matching If-None-Match ETag; no response body.' };
+    item.head = { ...get, summary: `HEAD: ${get.summary}`,
+      responses: Object.fromEntries(Object.entries(get.responses).map(([status, response]) =>
+        [status, { description: (response as { description: string }).description }])) };
   }
 }

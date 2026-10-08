@@ -1,6 +1,12 @@
 import type { CoinMarketCapFailureKind } from './coinmarketcap';
 
-export function coinMarketCapHttpFailure(kind: CoinMarketCapFailureKind, unknownIdIsInput = false) {
+export interface HttpFailure {
+  status: number;
+  code: string;
+  message: string;
+}
+
+export function coinMarketCapHttpFailure(kind: CoinMarketCapFailureKind, unknownIdIsInput = false): HttpFailure {
   if (kind === 'unknown-id' && unknownIdIsInput)
     return { status: 400, code: 'CMC_ID_NOT_FOUND', message: 'CoinMarketCap ID was not found' };
   if (kind === 'timeout')

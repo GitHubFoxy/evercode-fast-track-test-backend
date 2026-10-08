@@ -1,4 +1,5 @@
-const axios: any = require("axios");
+import axios, { isAxiosError } from "axios";
+import type { ProviderBudget } from "./budget";
 
 export interface UsdQuote {
   cmcId: number;
@@ -11,6 +12,10 @@ export interface UsdQuote {
 export type CoinMarketCapFailureKind = "unknown-id" | "timeout" | "provider-error";
 
 export class CoinMarketCapError extends Error {
+  /** Parsed provider JSON of an HTTP error response, kept so the budget can read the real credit count. */
+  providerBody?: unknown;
+  httpStatus?: number;
+  retryAfterMs?: number;
   constructor(public readonly kind: CoinMarketCapFailureKind) {
     super(kind);
     this.name = "CoinMarketCapError";
@@ -21,12 +26,12 @@ export interface CoinMarketCapConfig {
   apiKey: string;
   timeoutMs: number;
   baseUrl?: string;
-  budget?: import('./budget').ProviderBudget;
+  budget?: ProviderBudget;
   background?: boolean;
   batchSize?: number;
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -58,7 +63,7 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
     return invalidResponse();
   }
 
-  const matches = body.data.filter((entry: unknown) => isRecord(entry) && entry.id === cmcId);
+  const matches = body.data.filter((entry: unknown): entry is Record<string, unknown> => isRecord(entry) && entry.id === cmcId);
   if (matches.length > 1) return invalidResponse();
   const coin = matches[0];
   if (!coin) throw new CoinMarketCapError("unknown-id");
@@ -68,7 +73,7 @@ function parseQuote(body: unknown, cmcId: number): UsdQuote {
     return invalidResponse();
   }
 
-  const usdQuotes = coin.quote.filter((entry: unknown) => isRecord(entry) && entry.symbol === "USD");
+  const usdQuotes = coin.quote.filter((entry: unknown): entry is Record<string, unknown> => isRecord(entry) && entry.symbol === "USD");
   if (usdQuotes.length !== 1) return invalidResponse();
   const quote = usdQuotes[0];
   if (!quote || typeof quote.price !== "number" || !Number.isFinite(quote.price) || quote.price < 0
@@ -91,36 +96,31 @@ async function requestQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Pro
   throw new CoinMarketCapError('provider-error');
 }
 
-export async function transport(config: CoinMarketCapConfig, endpoint: string, signal?: AbortSignal): Promise<any> {
+export async function transport(config: CoinMarketCapConfig, endpoint: string, signal?: AbortSignal): Promise<unknown> {
   const baseUrl = (config.baseUrl ?? "https://pro-api.coinmarketcap.com").replace(/\/$/, "");
-  let response: any;
   try {
-    response = await axios.get(
-      `${baseUrl}${endpoint}`,
-      {
-        headers: { "X-CMC_PRO_API_KEY": config.apiKey },
-        timeout: config.timeoutMs,
-        signal,
-        maxRedirects: 0,
-      },
-    );
-  } catch (error: any) {
-    if (error?.response) {
+    const response = await axios.get<unknown>(`${baseUrl}${endpoint}`, {
+      headers: { "X-CMC_PRO_API_KEY": config.apiKey },
+      timeout: config.timeoutMs,
+      signal,
+      maxRedirects: 0,
+    });
+    return response.data;
+  } catch (error) {
+    if (!isAxiosError(error)) throw new CoinMarketCapError("provider-error");
+    if (error.response) {
       const failure = new CoinMarketCapError(error.response.status === 400 ? 'unknown-id' : 'provider-error');
-      (failure as any).providerBody = error.response.data;
-      (failure as any).httpStatus = error.response.status;
-      const retry = error.response.headers?.['retry-after'];
+      failure.providerBody = error.response.data;
+      failure.httpStatus = error.response.status;
+      const retry: unknown = error.response.headers?.['retry-after'];
       const retryMs = typeof retry === 'string' && /^\d+$/.test(retry) ? Number(retry) * 1000
         : typeof retry === 'string' ? Date.parse(retry) - Date.now() : NaN;
-      if (Number.isSafeInteger(retryMs) && retryMs >= 0) (failure as any).retryAfterMs = retryMs;
+      if (Number.isSafeInteger(retryMs) && retryMs >= 0) failure.retryAfterMs = retryMs;
       throw failure;
     }
-    if (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT") {
-      throw new CoinMarketCapError("timeout");
-    }
+    if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") throw new CoinMarketCapError("timeout");
     throw new CoinMarketCapError("provider-error");
   }
-  return response.data;
 }
 
 export async function getUsdQuote(config: CoinMarketCapConfig, cmcId: number): Promise<UsdQuote> {

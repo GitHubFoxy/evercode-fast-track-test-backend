@@ -1,31 +1,41 @@
 import { listTrackedCryptocurrencies, getTrackingSnapshot, saveTrackedQuotes } from './database';
+import type { Database, TrackingSnapshot } from './database';
 import { getUsdQuotes } from './coinmarketcap';
 import type { ApplicationConfig } from './app';
 
-export function createScheduler(database: any, config: ApplicationConfig): { changed: () => void; stop: () => void } {
-  let timer: any, running = false, stopped = false;
+export interface Scheduler {
+  changed: () => void;
+  stop: () => void;
+}
+
+export function createScheduler(database: Database, config: ApplicationConfig): Scheduler {
+  let timer: NodeJS.Timeout | undefined;
+  let running = false, stopped = false;
   const now = config.clock?.now ?? Date.now;
   const later = config.clock?.setTimeout ?? setTimeout;
   const cancel = config.clock?.clearTimeout ?? clearTimeout;
   const size = config.batchSize ?? 250;
   const sourceInterval = Math.max(60000, config.syncIntervalMs ?? 60000);
-  const changed = () => {
+  const changed = (): void => {
     if (stopped || running || config.syncIntervalMs === undefined) return;
     if (timer) cancel(timer);
     const count = listTrackedCryptocurrencies(database).length;
     const batches = Math.ceil(count / size);
     const cost = Math.floor(count / size) * Math.ceil(size / 250) + Math.ceil((count % size) / 250);
     const interval = count ? config.budget!.interval(cost, batches, sourceInterval) : sourceInterval;
-    timer = later(cycle, Math.min(2147483647, interval)); timer?.unref?.();
+    timer = later(cycle, Math.min(2147483647, interval));
+    timer?.unref?.();
   };
-  const cycle = async () => {
+  const cycle = async (): Promise<void> => {
     timer = undefined;
     if (stopped || running) return;
     running = true;
     try {
       await config.budget!.reconcile();
       if (stopped) return;
-      const snapshots = listTrackedCryptocurrencies(database).map(item => getTrackingSnapshot(database, item.id)!);
+      const snapshots = listTrackedCryptocurrencies(database)
+        .map(item => getTrackingSnapshot(database, item.id))
+        .filter((snapshot): snapshot is TrackingSnapshot => snapshot !== undefined);
       for (let offset = 0; offset < snapshots.length && !stopped; offset += size) {
         const batch = snapshots.slice(offset, offset + size);
         try {

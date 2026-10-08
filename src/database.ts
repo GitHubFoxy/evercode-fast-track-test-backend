@@ -1,6 +1,13 @@
-const fs: any = require("node:fs");
-const path: any = require("node:path");
-const { DatabaseSync }: { DatabaseSync: new (location: string) => any } = require("node:sqlite");
+import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+export type Database = DatabaseSync;
+
+/** Row shapes are fixed by the SELECT lists below; node:sqlite types rows loosely. */
+type Row<T> = T | undefined;
+interface IdRow { id: number }
+const cast = <T>(rows: unknown): T => rows as T;
 
 export interface TrackedCryptocurrency {
   id: number;
@@ -49,7 +56,7 @@ export class DuplicateTrackingError extends Error {
   }
 }
 
-export function openDatabase(databasePath: string): any {
+export function openDatabase(databasePath: string): Database {
   fs.mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(`
@@ -85,7 +92,7 @@ export function openDatabase(databasePath: string): any {
   `);
   const trackingSchema = database.prepare(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tracked_cryptocurrencies'",
-  ).get();
+  ).get() as { sql: string };
   if (!trackingSchema.sql.includes("AUTOINCREMENT")) {
     database.exec(`
       BEGIN IMMEDIATE;
@@ -102,14 +109,14 @@ export function openDatabase(databasePath: string): any {
     `);
   }
   if (!database.prepare("PRAGMA table_info(tracked_cryptocurrencies)").all()
-      .some((column: any) => column.name === "revision")) {
+      .some(column => column.name === "revision")) {
     database.exec("ALTER TABLE tracked_cryptocurrencies ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
   }
   return database;
 }
 
-export function listTrackedCryptocurrencies(database: any, page?: { limit: number; offset: number }): TrackedCryptocurrency[] {
-  return database.prepare(`
+export function listTrackedCryptocurrencies(database: Database, page?: { limit: number; offset: number }): TrackedCryptocurrency[] {
+  return cast<TrackedCryptocurrency[]>(database.prepare(`
     SELECT
       tracked.id AS id,
       cryptocurrency.cmc_id AS cmcId,
@@ -121,10 +128,10 @@ export function listTrackedCryptocurrencies(database: any, page?: { limit: numbe
       ON cryptocurrency.id = tracked.cryptocurrency_id
     ORDER BY tracked.id
     LIMIT ? OFFSET ?
-  `).all(page?.limit ?? -1, page?.offset ?? 0) as TrackedCryptocurrency[];
+  `).all(page?.limit ?? -1, page?.offset ?? 0));
 }
 
-export function isCmcIdTracked(database: any, cmcId: number): boolean {
+export function isCmcIdTracked(database: Database, cmcId: number): boolean {
   return Boolean(database.prepare(`
     SELECT 1
     FROM tracked_cryptocurrencies AS tracked
@@ -135,7 +142,7 @@ export function isCmcIdTracked(database: any, cmcId: number): boolean {
 }
 
 export function getTrackedCryptocurrency(
-  database: any,
+  database: Database,
   trackingId: number,
 ): TrackedCryptocurrency | undefined {
   return database.prepare(`
@@ -153,7 +160,7 @@ export function getTrackedCryptocurrency(
 }
 
 export function createTrackedCryptocurrencyWithQuote(
-  database: any,
+  database: Database,
   quote: StoredUsdQuote,
   fetchedAt: string,
 ): TrackedCryptocurrency {
@@ -168,9 +175,9 @@ export function createTrackedCryptocurrencyWithQuote(
     `).get(quote.cmcId);
     if (alreadyTracked) throw new DuplicateTrackingError();
 
-    let cryptocurrency = database.prepare(
+    const cryptocurrency = database.prepare(
       "SELECT id FROM cryptocurrencies WHERE cmc_id = ?",
-    ).get(quote.cmcId);
+    ).get(quote.cmcId) as Row<IdRow>;
     let cryptocurrencyId: number;
     if (cryptocurrency) {
       cryptocurrencyId = Number(cryptocurrency.id);
@@ -208,7 +215,7 @@ export function createTrackedCryptocurrencyWithQuote(
 }
 
 export function saveTrackedQuotes(
-  database: any,
+  database: Database,
   snapshot: TrackingSnapshot[],
   quotes: StoredUsdQuote[],
   fetchedAt: string,
@@ -218,10 +225,10 @@ export function saveTrackedQuotes(
     for (const tracked of snapshot) {
       assertTrackingSnapshotCurrent(database, tracked);
     }
-    const saved = snapshot.map((tracked) => {
+    const saved: PriceHistoryEntry[] = snapshot.map((tracked) => {
       const quote = quotes.find((item) => item.cmcId === tracked.cmcId);
       if (!quote) throw new Error("Missing validated quote");
-      const cryptocurrency = database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(tracked.cmcId);
+      const cryptocurrency = cast<IdRow>(database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(tracked.cmcId));
       database.prepare(`UPDATE cryptocurrencies SET symbol = ?, name = ?, last_updated_at = ? WHERE id = ?`)
         .run(quote.symbol, quote.name, fetchedAt, cryptocurrency.id);
       const inserted = database.prepare(`INSERT INTO price_history (cryptocurrency_id, price, fetched_at, provider_updated_at)
@@ -236,7 +243,7 @@ export function saveTrackedQuotes(
   }
 }
 
-export function getTrackingSnapshot(database: any, trackingId: number): TrackingSnapshot | undefined {
+export function getTrackingSnapshot(database: Database, trackingId: number): TrackingSnapshot | undefined {
   return database.prepare(`
     SELECT tracked.id AS id, coin.cmc_id AS cmcId, tracked.revision AS revision
     FROM tracked_cryptocurrencies AS tracked
@@ -246,19 +253,19 @@ export function getTrackingSnapshot(database: any, trackingId: number): Tracking
 }
 
 // Call inside the same write transaction as quote/history persistence, after external I/O.
-export function assertTrackingSnapshotCurrent(database: any, snapshot: TrackingSnapshot): void {
+export function assertTrackingSnapshotCurrent(database: Database, snapshot: TrackingSnapshot): void {
   const current = getTrackingSnapshot(database, snapshot.id);
   if (!current || current.revision !== snapshot.revision || current.cmcId !== snapshot.cmcId) {
     throw new TrackingChangedError();
   }
 }
 
-export function deleteTrackedCryptocurrency(database: any, trackingId: number): boolean {
+export function deleteTrackedCryptocurrency(database: Database, trackingId: number): boolean {
   return database.prepare("DELETE FROM tracked_cryptocurrencies WHERE id = ?").run(trackingId).changes > 0;
 }
 
 export function replaceTrackedCryptocurrencyWithQuote(
-  database: any,
+  database: Database,
   snapshot: TrackingSnapshot,
   quote: StoredUsdQuote,
   fetchedAt: string,
@@ -279,7 +286,7 @@ export function replaceTrackedCryptocurrencyWithQuote(
       ON CONFLICT(cmc_id) DO UPDATE SET
         symbol = excluded.symbol, name = excluded.name, last_updated_at = excluded.last_updated_at
     `).run(quote.cmcId, quote.symbol, quote.name, fetchedAt);
-    const coin = database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(quote.cmcId);
+    const coin = cast<IdRow>(database.prepare("SELECT id FROM cryptocurrencies WHERE cmc_id = ?").get(quote.cmcId));
     database.prepare("UPDATE tracked_cryptocurrencies SET cryptocurrency_id = ?, revision = revision + 1 WHERE id = ?")
       .run(coin.id, trackingId);
     database.prepare(`
@@ -297,16 +304,16 @@ export function replaceTrackedCryptocurrencyWithQuote(
 }
 
 export function getCryptocurrencyHistory(
-  database: any,
+  database: Database,
   cmcId: number,
   page: { limit: number; offset: number; from?: string; to?: string } = { limit: 50, offset: 0 },
 ): PriceHistoryEntry[] | undefined {
   const cryptocurrency = database.prepare(
     "SELECT id FROM cryptocurrencies WHERE cmc_id = ?",
-  ).get(cmcId);
+  ).get(cmcId) as Row<IdRow>;
   if (!cryptocurrency) return undefined;
 
-  return database.prepare(`
+  return cast<PriceHistoryEntry[]>(database.prepare(`
     SELECT
       history.id AS id,
       cryptocurrency.cmc_id AS cmcId,
@@ -324,5 +331,5 @@ export function getCryptocurrencyHistory(
       AND (? IS NULL OR history.fetched_at <= ?)
     ORDER BY history.fetched_at, history.id
     LIMIT ? OFFSET ?
-  `).all(cmcId, page.from ?? null, page.from ?? null, page.to ?? null, page.to ?? null, page.limit, page.offset) as PriceHistoryEntry[];
+  `).all(cmcId, page.from ?? null, page.from ?? null, page.to ?? null, page.to ?? null, page.limit, page.offset));
 }
