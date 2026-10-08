@@ -5,7 +5,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 // Public CLI check in a fresh temporary checkout; no host .env or dist is copied.
-test('npm start builds a fresh checkout and serves protected HTTP without preexisting dist', async () => {
+test('npm start builds a fresh checkout using only environment variables and ignores .env', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-start-'));
   let child, exited, exitPromise, deadline;
   try {
@@ -21,10 +21,19 @@ test('npm start builds a fresh checkout and serves protected HTTP without preexi
     await new Promise(resolve => reserved.close(resolve));
     const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
       !key.startsWith('CMC_') && !['API_TOKEN', 'COINMARKETCAP_API_KEY', 'DATABASE_PATH', 'PORT', 'PRICE_CURRENCY', 'SYNC_INTERVAL_MS', 'SHUTDOWN_TIMEOUT_MS'].includes(key)));
+    fs.writeFileSync(path.join(directory, '.env'), [
+      'API_TOKEN=ignored-file-token',
+      'COINMARKETCAP_API_KEY=ignored-provider-key',
+      `DATABASE_PATH="${path.join(directory, 'ignored.sqlite')}"`,
+      'PORT=1',
+      // This unset environment value would prevent startup if .env were read.
+      'PRICE_CURRENCY=EUR',
+    ].join('\n'));
     let output = '';
     child = spawn(process.execPath, [process.env.npm_execpath, 'start'], {
       cwd: directory, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...environment, API_TOKEN: 'start-test-client-token', COINMARKETCAP_API_KEY: 'start-test-provider-key',
+      env: { ...environment, API_TOKEN: 'start-test-client-token',
+        COINMARKETCAP_API_KEY: 'start-test-provider-key',
         DATABASE_PATH: path.join(directory, 'service.sqlite'), PORT: String(port) },
     });
     child.stdout.on('data', data => { output += data; });
@@ -37,6 +46,8 @@ test('npm start builds a fresh checkout and serves protected HTTP without preexi
     }
     expect(output).toContain('HTTP server listening');
     expect(fs.existsSync(path.join(directory, 'dist', 'main.js'))).toBe(true);
+    expect(fs.existsSync(path.join(directory, 'service.sqlite'))).toBe(true);
+    expect(fs.existsSync(path.join(directory, 'ignored.sqlite'))).toBe(false);
     const get = headers => new Promise((resolve, reject) => {
       const req = http.get(`http://127.0.0.1:${port}/api/tracked-cryptocurrencies`, { headers, timeout: 1000 }, res => {
         let body = ''; res.on('data', chunk => { body += chunk; });

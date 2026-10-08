@@ -1,10 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type SqliteDatabaseConstructor from "better-sqlite3";
 
-export type Database = DatabaseSync;
+// The modern driver requires Node >=22 with Node-API 10 (early Node 22 has Node-API 9).
+export const SqliteDatabase: typeof SqliteDatabaseConstructor = require(
+  Number(process.versions.node.split('.')[0]) >= 22 && Number(process.versions.napi) >= 10
+    ? 'better-sqlite3' : 'better-sqlite3-node18',
+);
+export type Database = SqliteDatabaseConstructor.Database;
 
-/** Row shapes are fixed by the SELECT lists below; node:sqlite types rows loosely. */
+/** Row shapes are fixed by the SELECT lists below. */
 type Row<T> = T | undefined;
 interface IdRow { id: number }
 const cast = <T>(rows: unknown): T => rows as T;
@@ -58,7 +63,7 @@ export class DuplicateTrackingError extends Error {
 
 export function openDatabase(databasePath: string): Database {
   fs.mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
-  const database = new DatabaseSync(databasePath);
+  const database = new SqliteDatabase(databasePath);
   database.exec(`
     PRAGMA foreign_keys = ON;
 
@@ -108,7 +113,7 @@ export function openDatabase(databasePath: string): Database {
       COMMIT;
     `);
   }
-  if (!database.prepare("PRAGMA table_info(tracked_cryptocurrencies)").all()
+  if (!database.prepare<[], { name: string }>("PRAGMA table_info(tracked_cryptocurrencies)").all()
       .some(column => column.name === "revision")) {
     database.exec("ALTER TABLE tracked_cryptocurrencies ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
   }

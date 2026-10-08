@@ -79,6 +79,8 @@ export function loadConfig(
       throw new ConfigurationError('CMC_BASE_URL must use HTTPS or local loopback HTTP');
   }
   const apiToken = required(environment, "API_TOKEN");
+  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(apiToken))
+    throw new ConfigurationError('API_TOKEN must use the Bearer token format');
   const coinMarketCapApiKey = required(environment, "COINMARKETCAP_API_KEY");
   if (apiToken === coinMarketCapApiKey)
     throw new ConfigurationError('API_TOKEN and COINMARKETCAP_API_KEY must differ');

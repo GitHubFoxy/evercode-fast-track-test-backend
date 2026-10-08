@@ -1,9 +1,11 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const http = require('node:http');
+const { createServer } = require('./http-server.cjs');
 const request = require('supertest');
 const { createApplication } = require('../dist/app');
+const { openDatabase } = require('../dist/database');
+const { ProviderBudget } = require('../dist/budget');
 const stamp = '2030-01-01T00:00:00.000Z';
 const quote = id => ({ id, name: `Coin ${id}`, symbol: `C${id}`, last_updated: stamp,
   quote: [{ symbol: 'USD', price: 42, last_updated: stamp }] });
@@ -20,7 +22,7 @@ describe('shared persistent provider budget and runtime', () => {
     calls = []; now = Date.parse(stamp);
     respond = (url, res) => res.end(JSON.stringify({ data: url.searchParams.get('id').split(',').map(Number).map(quote),
       status: { error_code: 0, credit_count: 1 } }));
-    provider = http.createServer((req, res) => {
+    provider = createServer((req, res) => {
       const url = new URL(req.url, 'http://localhost'); calls.push(url.pathname + url.search);
       res.setHeader('content-type', 'application/json'); respond(url, res);
     });
@@ -142,27 +144,62 @@ describe('shared persistent provider budget and runtime', () => {
     const before = calls.length; await tick(); expect(calls).toHaveLength(before);
     app.close(); expect(scheduled).toBeUndefined();
   });
-  test('client in flight prevents background spending and cycles never overlap', async () => {
+  test('client and background requests run concurrently while background cycles never overlap', async () => {
     let scheduled;
     const clock = { now: () => now, setTimeout: (callback, delay) => { scheduled = { callback, at: now + delay }; return scheduled; },
       clearTimeout: timer => { if (scheduled === timer) scheduled = undefined; } };
     reopen({ clock, syncIntervalMs: 60000, coinMarketCapTimeoutMs: 1000, quota: fallback });
     await add(1);
-    let release, entered;
+    let entered;
+    const releases = [];
     const started = new Promise(resolve => { entered = resolve; });
     const normal = respond;
-    respond = (url, res) => { release = () => normal(url, res); entered(); };
+    respond = (url, res) => { releases.push(() => normal(url, res)); entered(); };
     const client = api('get', '/api/prices').then(r => r);
     await started;
-    const timer = scheduled; now = timer.at; await timer.callback();
-    expect(calls).toHaveLength(2);
-    release(); expect((await client).status).toBe(200);
-    const next = scheduled; now = next.at;
+    const timer = scheduled; now = timer.at; scheduled = undefined;
     const bgStarted = new Promise(resolve => { entered = resolve; });
-    const background = next.callback(); await bgStarted;
-    await next.callback(); expect(calls).toHaveLength(3);
-    release(); await background;
+    const background = timer.callback();
+    try {
+      expect(await Promise.race([bgStarted.then(() => true), background.then(() => false)])).toBe(true);
+      await timer.callback(); expect(calls).toHaveLength(3);
+      expect(scheduled).toBeUndefined();
+      releases[1](); await background;
+      expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(2);
+    } finally {
+      releases[0]();
+      expect((await client).status).toBe(200);
+    }
     expect((await api('get', '/api/cryptocurrencies/1/history')).body).toHaveLength(3);
+  });
+  test.each(['credits', 'requests'])('concurrent calls reserve %s on disk and leave the last unit for a client', async limit => {
+    const database = openDatabase(path.join(dir, 'reservation.sqlite'));
+    const quota = { ...fallback, creditsLeft: limit === 'credits' ? 2 : 1000,
+      requestsLeft: limit === 'requests' ? 2 : 1000 };
+    const budget = new ProviderBudget(database, () => now, quota);
+    const success = { status: { error_code: 0, credit_count: 1 } };
+    const operation = jest.fn(async () => success);
+    let entered, release;
+    const started = new Promise(resolve => { entered = resolve; });
+    const client = budget.call(1, false, () => {
+      entered();
+      return new Promise(resolve => { release = () => resolve(success); });
+    });
+    try {
+      await started;
+      const state = JSON.parse(database.prepare('SELECT state FROM provider_budget WHERE id=1').get().state);
+      expect(limit === 'credits' ? state.creditsLeft : state.requestsLeft).toBe(1);
+      await expect(budget.call(1, true, operation)).rejects.toThrow('provider-error');
+      expect(operation).not.toHaveBeenCalled();
+      await expect(budget.call(1, false, operation)).resolves.toBe(success);
+      await expect(budget.call(1, false, operation)).rejects.toThrow('provider-error');
+      expect(operation).toHaveBeenCalledTimes(1);
+    } finally {
+      release?.();
+      await client;
+      await budget.stop();
+      database.close();
+    }
   });
   test('provider throttling blocks further calls in the minute and recovers after reset', async () => {
     reopen({ quota: fallback }); await add(1);

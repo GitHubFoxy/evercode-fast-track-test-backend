@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const http = require('node:http');
+const { createServer } = require('./http-server.cjs');
 const request = require('supertest');
 const { createApplication } = require('../dist/app');
 const TOKEN = 'contract-client-secret', KEY = 'contract-provider-secret';
@@ -12,7 +12,7 @@ const call = (method, route) => request(application.app)[method](route).set('Aut
 beforeEach(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-contract-'));
   mode = 'ok';
-  server = http.createServer((req, res) => {
+  server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
     if (mode === 'timeout') return;
     if (mode === 'failure') { res.writeHead(503); res.end(JSON.stringify({ secret: KEY })); return; }
@@ -177,7 +177,7 @@ test.each([operations[3], operations[5], operations[6]])('documents tracking con
 test('reads a migrated catalog coin without observations as null timestamp and empty history', async () => {
   await application.close();
   // Arrange an on-disk legacy fixture, not a side channel for verifying writes.
-  const db = new (require('node:sqlite').DatabaseSync)(path.join(directory, 'test.sqlite'));
+  const db = new (require('../dist/database').SqliteDatabase)(path.join(directory, 'test.sqlite'));
   db.exec("INSERT INTO cryptocurrencies(id,cmc_id,symbol,name) VALUES(1,1,'BTC','Bitcoin'); INSERT INTO tracked_cryptocurrencies(cryptocurrency_id) VALUES(1)"); db.close();
   application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY, databasePath: path.join(directory, 'test.sqlite'), coinMarketCapTimeoutMs: 50 });
   const response = await call('get', `${TRACKING}/1`); documented(response, `${TRACKING}/{id}`, 'get', 200);
@@ -186,13 +186,13 @@ test('reads a migrated catalog coin without observations as null timestamp and e
   expect(history.body).toEqual([]);
 });
 
-test('unknown routes/methods return safe 404 and unexpected parser failures return documented 500', async () => {
+test('unknown routes/methods return safe 404 and unsupported parser encoding returns documented 415', async () => {
   for (const [method, url] of [['get', '/missing'], ['patch', TRACKING]]) {
     const response = await call(method, url); expect(response.status).toBe(404);
     matchesSchema(response.body, spec.components.schemas.Error); expect(response.body.error.code).toBe('NOT_FOUND');
   }
   const response = await call('post', TRACKING).set('Content-Type', 'application/json').set('Content-Encoding', 'unknown').send('{}');
-  documented(response, TRACKING, 'post', 500); expect(response.body.error.code).toBe('INTERNAL_ERROR');
+  documented(response, TRACKING, 'post', 415); expect(response.body.error.code).toBe('UNSUPPORTED_ENCODING');
 });
 
 test.each(['post', 'put', 'delete'])('rejects unsupported query fields for %s mutations', async method => {

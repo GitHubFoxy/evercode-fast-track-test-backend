@@ -1,5 +1,6 @@
 const { spawn } = require('node:child_process');
 const http = require('node:http');
+const { createServer } = require('./http-server.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -14,14 +15,14 @@ const bounded = (promise, ms = 15000) => {
 
 test.each([['SIGINT', 'quotes'], ['SIGTERM', 'quotes'], ['SIGINT', 'key-info'], ['SIGTERM', 'key-info']])('%s cancels active %s and exits without new requests', async (signal, phase) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-signal-'));
-  const probe = http.createServer();
+  const probe = createServer();
   await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
   const port = probe.address().port;
   await new Promise(resolve => probe.close(resolve));
   let entered, child, outgoing, reopened;
   const arrived = new Promise(resolve => { entered = resolve; });
   const calls = [];
-  const provider = http.createServer((req, res) => {
+  const provider = createServer((req, res) => {
     calls.push(req.url);
     if (req.url === '/v1/key/info' && phase === 'quotes') {
       res.setHeader('content-type', 'application/json');

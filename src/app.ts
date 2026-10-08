@@ -75,8 +75,9 @@ export function createApplication(input: ApplicationConfig): Application {
 
   app.use('/api', (request: Request, response: Response, next: NextFunction) => {
     const authorization = request.get('authorization');
-    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+    const match = typeof authorization === 'string' ? /^bearer +([^\s]+) *$/i.exec(authorization) : null;
     if (!match || !matchesToken(match[1], config.apiToken)) {
+      response.set('WWW-Authenticate', 'Bearer');
       sendError(response, 401, 'UNAUTHORIZED', 'Authentication required');
       return;
     }
@@ -166,12 +167,24 @@ export function createApplication(input: ApplicationConfig): Application {
   });
 
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+    const requestError = error instanceof Error ? error as Error & { type?: unknown; status?: unknown } : undefined;
     if (error instanceof InvalidQueryError) {
       sendError(response, 400, 'INVALID_QUERY', 'Query parameters are invalid');
-    } else if (typeof error === 'object' && error !== null && (error as { type?: unknown }).type === 'entity.too.large') {
+    } else if (requestError?.type === 'entity.too.large' && requestError.status === 413) {
       sendError(response, 413, 'PAYLOAD_TOO_LARGE', 'JSON body exceeds 16 KiB');
-    } else if (error instanceof SyntaxError && 'body' in error) {
+    } else if (requestError?.type === 'encoding.unsupported' && requestError.status === 415) {
+      sendError(response, 415, 'UNSUPPORTED_ENCODING', 'Request body encoding is not supported');
+    } else if (requestError?.type === 'charset.unsupported' && requestError.status === 415) {
+      sendError(response, 415, 'UNSUPPORTED_CHARSET', 'JSON body charset is not supported');
+    } else if (error instanceof URIError && requestError?.status === 400
+        && error.message.startsWith('Failed to decode param \'')) {
+      sendError(response, 400, 'INVALID_PATH', 'Path parameter encoding is invalid');
+    } else if (error instanceof SyntaxError && requestError?.type === 'entity.parse.failed'
+        && requestError.status === 400 && 'body' in error) {
       sendError(response, 400, 'INVALID_JSON', 'Request body must contain valid JSON');
+    } else if (requestError?.status === 400
+        && (requestError.type === 'request.aborted' || requestError.type === 'request.size.invalid')) {
+      sendError(response, 400, 'INVALID_BODY', 'Request body is invalid');
     } else {
       sendError(response, 500, 'INTERNAL_ERROR', 'An internal error occurred');
     }

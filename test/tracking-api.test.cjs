@@ -321,8 +321,8 @@ describe("tracking replacement and removal", () => {
   test("opening the previous disk schema preserves existing tracking and history and upgrades ID allocation", async () => {
     application.close();
     fs.rmSync(path.join(directory, "service.sqlite"));
-    const { DatabaseSync } = require("node:sqlite");
-    const fixture = new DatabaseSync(path.join(directory, "service.sqlite"));
+    const { SqliteDatabase } = require("../dist/database");
+    const fixture = new SqliteDatabase(path.join(directory, "service.sqlite"));
     fixture.exec(`
       CREATE TABLE cryptocurrencies (
         id INTEGER PRIMARY KEY, cmc_id INTEGER NOT NULL UNIQUE,

@@ -1,4 +1,9 @@
 const { loadConfig } = require("../dist/config.js");
+const { createApplication } = require("../dist/app.js");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const request = require("supertest");
 
 const validEnvironment = {
   API_TOKEN: "a-fake-test-token-with-sufficient-length",
@@ -28,6 +33,48 @@ describe("service configuration", () => {
       expect(error.name).toBe('ConfigurationError');
       expect(error.message).not.toContain('fake-shared-secret');
     }
+  });
+  test.each([
+    '  azAZ09-._~+/  ',
+    'fake-token==',
+    'header.payload.signature',
+  ])('accepts and authenticates valid normalized Bearer token (%s)', async token => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-config-token-'));
+    let application;
+    try {
+      const config = loadConfig({ ...validEnvironment, API_TOKEN: token,
+        DATABASE_PATH: path.join(directory, 'service.sqlite') });
+      expect(config.apiToken).toBe(token.trim());
+      application = createApplication(config);
+      const response = await request(application.app).get('/api/tracked-cryptocurrencies')
+        .set('Authorization', `Bearer ${config.apiToken}`);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([]);
+    } finally {
+      await application?.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  test.each([
+    ['space', 'first second'],
+    ['tab', 'first\tsecond'],
+    ['line break', 'first\nsecond'],
+    ['carriage return', 'first\rsecond'],
+    ['NUL', 'secret\u0000'],
+    ['control character', 'secret\u007f'],
+    ['non-ASCII', 'секрет'],
+    ['non-ASCII whitespace', 'first\u00a0second'],
+    ['invalid punctuation', 'secret:value'],
+    ['leading padding', '=secret'],
+    ['embedded padding', 'sec=ret'],
+    ['padding only', '==='],
+  ])('rejects %s in API_TOKEN without exposing the secret', (_case, token) => {
+    let failure;
+    try { loadConfig({ ...validEnvironment, API_TOKEN: token }); }
+    catch (error) { failure = error; }
+    expect(failure).toMatchObject({ name: 'ConfigurationError',
+      message: 'API_TOKEN must use the Bearer token format' });
+    expect(failure.message).not.toContain(token);
   });
   test('parses verified bootstrap quota and rejects unsafe runtime values', () => {
     const env = { ...validEnvironment, CMC_MONTHLY_LIMIT: '100', CMC_CREDITS_LEFT: '90',

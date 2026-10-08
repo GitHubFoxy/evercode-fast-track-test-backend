@@ -16,8 +16,9 @@ const error = (description: string, codes: string[]) => ({ description,
     } },
   } }) });
 const common = {
-  '401': error('Missing, incorrect or malformed Authorization. Exact format: Bearer <API_TOKEN>.', ['UNAUTHORIZED']),
+  '401': error('Missing, incorrect or malformed Authorization. Format: Bearer <API_TOKEN> (scheme is case-insensitive). The response carries WWW-Authenticate: Bearer.', ['UNAUTHORIZED']),
   '413': error('JSON body exceeds 16 KiB.', ['PAYLOAD_TOO_LARGE']),
+  '415': error('Unsupported Content-Encoding or JSON charset.', ['UNSUPPORTED_ENCODING', 'UNSUPPORTED_CHARSET']),
   '500': error('Unexpected internal failure.', ['INTERNAL_ERROR']),
   '503': error('Shutdown has started; no new operations.', ['STOPPING']),
 };
@@ -27,7 +28,7 @@ const provider = {
 };
 const conflict = error('Duplicate cryptocurrency or tracking snapshot changed during request.', ['ALREADY_TRACKED', 'TRACKING_CHANGED']);
 const missingTracking = error('Unknown local tracking record.', ['TRACKING_NOT_FOUND']);
-const bad = (...codes: string[]) => error('Invalid input; unsupported fields, repeated/structured query values and malformed JSON are rejected.', [...codes, 'INVALID_JSON']);
+const bad = (...codes: string[]) => error('Invalid input; unsupported fields, repeated/structured query values, malformed JSON, invalid body framing and malformed path encoding are rejected.', [...new Set([...codes, 'INVALID_JSON', 'INVALID_BODY', 'INVALID_PATH'])]);
 const success = (schema: Json, description = 'Success') => ({ description, content: json(schema) });
 const pathId = (name: string, description: string) => ({ name, in: 'path', required: true, description: `${description} Decimal digits without leading zero; positive safe integer.`, schema: id });
 const page = [
@@ -40,7 +41,7 @@ const operation = (summary: string, responses: Record<string, Json>, parameters:
 const publicOperation = (summary: string, content: Json) => ({ summary, security: [], responses: {
   '200': { description: 'Public documentation; no configured credentials.', content },
   '400': bad('INVALID_QUERY'), '404': error('Unknown resource or unsupported method.', ['NOT_FOUND']),
-  '413': common['413'], '500': common['500'], '503': common['503'],
+  '413': common['413'], '415': common['415'], '500': common['500'], '503': common['503'],
 } });
 
 export const openapi: OpenApiDocument = {
@@ -118,7 +119,7 @@ export const openapi: OpenApiDocument = {
         } },
       Error: { type: 'object', additionalProperties: false, required: ['error'], properties: {
         error: { type: 'object', additionalProperties: false, required: ['code', 'message'], properties: {
-          code: { type: 'string', enum: ['UNAUTHORIZED', 'INVALID_JSON', 'INVALID_BODY', 'INVALID_QUERY', 'INVALID_CMC_ID', 'INVALID_TRACKING_ID', 'CMC_ID_NOT_FOUND', 'ALREADY_TRACKED', 'TRACKING_CHANGED', 'TRACKING_NOT_FOUND', 'CRYPTOCURRENCY_NOT_FOUND', 'CMC_API_ERROR', 'CMC_TIMEOUT', 'PAYLOAD_TOO_LARGE', 'NOT_FOUND', 'INTERNAL_ERROR', 'STOPPING'] },
+          code: { type: 'string', enum: ['UNAUTHORIZED', 'INVALID_JSON', 'INVALID_BODY', 'INVALID_PATH', 'INVALID_QUERY', 'INVALID_CMC_ID', 'INVALID_TRACKING_ID', 'CMC_ID_NOT_FOUND', 'ALREADY_TRACKED', 'TRACKING_CHANGED', 'TRACKING_NOT_FOUND', 'CRYPTOCURRENCY_NOT_FOUND', 'CMC_API_ERROR', 'CMC_TIMEOUT', 'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_ENCODING', 'UNSUPPORTED_CHARSET', 'NOT_FOUND', 'INTERNAL_ERROR', 'STOPPING'] },
           message: { type: 'string' },
         } },
       } },

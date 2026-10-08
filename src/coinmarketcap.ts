@@ -96,6 +96,13 @@ async function requestQuotes(config: CoinMarketCapConfig, cmcIds: number[]): Pro
   throw new CoinMarketCapError('provider-error');
 }
 
+/** Only a 400 whose provider status message names the "id" parameter proves the ID is unknown. */
+function isInvalidIdResponse(status: number, body: unknown): boolean {
+  if (status !== 400 || !isRecord(body) || !isRecord(body.status)) return false;
+  const message = body.status.error_message;
+  return typeof message === "string" && /invalid value for "id"/i.test(message);
+}
+
 export async function transport(config: CoinMarketCapConfig, endpoint: string, signal?: AbortSignal): Promise<unknown> {
   const baseUrl = (config.baseUrl ?? "https://pro-api.coinmarketcap.com").replace(/\/$/, "");
   try {
@@ -109,7 +116,7 @@ export async function transport(config: CoinMarketCapConfig, endpoint: string, s
   } catch (error) {
     if (!isAxiosError(error)) throw new CoinMarketCapError("provider-error");
     if (error.response) {
-      const failure = new CoinMarketCapError(error.response.status === 400 ? 'unknown-id' : 'provider-error');
+      const failure = new CoinMarketCapError(isInvalidIdResponse(error.response.status, error.response.data) ? 'unknown-id' : 'provider-error');
       failure.providerBody = error.response.data;
       failure.httpStatus = error.response.status;
       const retry: unknown = error.response.headers?.['retry-after'];
