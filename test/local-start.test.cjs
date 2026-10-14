@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 
 // Public CLI check in a fresh temporary checkout; no host .env or dist is copied.
 test('npm start builds a fresh checkout using only environment variables and ignores .env', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-start-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-start-'));
   let child, exited, exitPromise, deadline;
   try {
     for (const name of ['package.json', 'tsconfig.json', 'src']) {

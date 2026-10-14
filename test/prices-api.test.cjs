@@ -16,7 +16,7 @@ describe('fresh prices and saved history HTTP API', () => {
   const add = (cmcId) => request(application.app).post('/api/tracked-cryptocurrencies')
     .set('Authorization', `Bearer ${TOKEN}`).send({ cmcId });
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-prices-'));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-prices-'));
     calls = [];
     respond = (ids, outgoing) => outgoing.end(JSON.stringify({ data: ids.map(id => coin(id)), status: { error_code: 0, credit_count: 1 } }));
     server = http.createServer((incoming, outgoing) => {

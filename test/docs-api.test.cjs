@@ -7,7 +7,7 @@ const TOKEN = 'docs-test-client-secret';
 const KEY = 'docs-test-provider-secret';
 let directory, application;
 beforeEach(() => {
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-docs-'));
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-docs-'));
   application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY,
     databasePath: path.join(directory, 'test.sqlite'), coinMarketCapTimeoutMs: 100 });
 });

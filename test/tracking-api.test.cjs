@@ -22,7 +22,7 @@ describe("tracking replacement and removal", () => {
   const history = async (cmcId) => (await api("get", `/api/cryptocurrencies/${cmcId}/history`)).body;
 
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "evercode-tracking-"));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "crypto-api-tracking-"));
     handler = (incoming, outgoing) => {
       const id = Number(new URL(incoming.url, "http://localhost").searchParams.get("id"));
       outgoing.writeHead(200, { "content-type": "application/json" });

@@ -33,7 +33,7 @@ describe('review fixes', () => {
   };
 
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-fixes-'));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-fixes-'));
     now = start; scheduled = undefined; calls = []; application = undefined;
     handler = (ids, res) => { res.setHeader('content-type', 'application/json'); res.end(okBody(ids)); };
     provider = createServer((req, res) => {

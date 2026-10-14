@@ -88,4 +88,4 @@ docker compose --env-file .env down
 
 Для локального запуска нажмите `Ctrl+C` в терминале сервиса.
 
-Данные сохраняются: в Docker — в томе `sqlite-data`, локально — в `./data/evercode.sqlite`.
+Данные сохраняются: в Docker — в томе `sqlite-data`, локально — в `./data/crypto-prices.sqlite`.

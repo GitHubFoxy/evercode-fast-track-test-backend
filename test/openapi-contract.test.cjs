@@ -10,7 +10,7 @@ const timestamp = '2025-01-15T12:00:00.000Z';
 let directory, application, server, spec, mode, release, entered;
 const call = (method, route) => request(application.app)[method](route).set('Authorization', `Bearer ${TOKEN}`);
 beforeEach(async () => {
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-contract-'));
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-contract-'));
   mode = 'ok';
   server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');

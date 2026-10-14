@@ -11,7 +11,7 @@ describe("GET /api/tracked-cryptocurrencies", () => {
   let application;
 
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "evercode-foundation-"));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "crypto-api-foundation-"));
     application = createApplication({
       apiToken: API_TOKEN,
       databasePath: path.join(directory, "service.sqlite"),

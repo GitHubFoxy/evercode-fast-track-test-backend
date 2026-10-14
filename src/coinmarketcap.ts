@@ -57,9 +57,13 @@ function invalidResponse(): never {
   throw new CoinMarketCapError("provider-error");
 }
 
+export function isSuccessfulProviderCode(value: unknown): boolean {
+  return value === 0 || value === "0";
+}
+
 function parseQuote(body: unknown, cmcId: number): UsdQuote {
   if (!isRecord(body) || !Array.isArray(body.data) || !isRecord(body.status)
-      || body.status.error_code !== 0) {
+      || !isSuccessfulProviderCode(body.status.error_code)) {
     return invalidResponse();
   }
 

@@ -39,7 +39,7 @@ describe("tracked cryptocurrency API", () => {
   let cmcRequests;
 
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "evercode-create-"));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "crypto-api-create-"));
     cmcResponse = successfulQuote();
     cmcStatus = 200;
     cmcDelayMs = 0;
@@ -91,6 +91,21 @@ describe("tracked cryptocurrency API", () => {
       url: "/v3/cryptocurrency/quotes/latest?id=1&convert=USD",
       apiKey: CMC_API_KEY,
     }]);
+  });
+
+  test.each([0, "0", "1001", "", null, false])("validates provider success code %p before saving a quote", async (code) => {
+    cmcResponse.status.error_code = code;
+    const response = await request(application.app)
+      .post("/api/tracked-cryptocurrencies")
+      .set("Authorization", `Bearer ${API_TOKEN}`)
+      .send({ cmcId: 1 });
+    const succeeds = code === 0 || code === "0";
+    expect(response.status).toBe(succeeds ? 201 : 502);
+    const history = await request(application.app)
+      .get("/api/cryptocurrencies/1/history")
+      .set("Authorization", `Bearer ${API_TOKEN}`);
+    expect(history.status).toBe(succeeds ? 200 : 404);
+    if (succeeds) expect(history.body).toHaveLength(1);
   });
 
   test("rejects an impossible provider timestamp without creating a tracking record", async () => {

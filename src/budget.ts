@@ -1,5 +1,5 @@
 import type { Database } from './database';
-import { CoinMarketCapError, isIsoTimestamp, isRecord } from './coinmarketcap';
+import { CoinMarketCapError, isIsoTimestamp, isRecord, isSuccessfulProviderCode } from './coinmarketcap';
 
 export interface QuotaFallback {
   monthlyLimit?: number;
@@ -126,7 +126,7 @@ export class ProviderBudget {
     const used = field(usage, 'current_month', 'credits_used');
     const made = field(usage, 'current_minute', 'requests_made');
     const creditCount = field(body, 'status', 'credit_count');
-    if (!local || field(body, 'status', 'error_code') !== 0 || !plan || !usage || !this.valid(candidate)
+    if (!local || !isSuccessfulProviderCode(field(body, 'status', 'error_code')) || !plan || !usage || !this.valid(candidate)
         || Date.parse(candidate.resetAt) < Date.parse(local.resetAt)
         || !nonNegative(creditCount)
         || (used !== undefined && (!nonNegative(used) || used + candidate.creditsLeft > candidate.monthlyLimit))
@@ -175,7 +175,7 @@ export class ProviderBudget {
       body = await operation(controller.signal);
       if (this.stopped) throw fail();
       const creditCount = field(body, 'status', 'credit_count');
-      if (field(body, 'status', 'error_code') === 0 && !nonNegative(creditCount)) {
+      if (isSuccessfulProviderCode(field(body, 'status', 'error_code')) && !nonNegative(creditCount)) {
         this.update(current => { current.unconfirmed = true; });
         throw fail();
       }

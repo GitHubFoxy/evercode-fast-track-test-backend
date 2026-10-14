@@ -19,7 +19,7 @@ describe('optional quota recovery across periods and restarts', () => {
     budget = new ProviderBudget(database, () => now, quota, keyInfo);
   };
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-quota-regression-'));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-quota-regression-'));
     now = Date.parse('2030-01-01T00:00:00Z');
     quote = jest.fn(async () => success);
     await reopen();

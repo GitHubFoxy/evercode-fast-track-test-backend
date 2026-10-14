@@ -35,7 +35,7 @@ describe('background deadlines remain independent of client traffic', () => {
   };
 
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-scheduler-'));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-scheduler-'));
     now = start; scheduled = undefined; calls = []; application = undefined;
     respond = (ids, res) => {
       const timestamp = new Date(now).toISOString();

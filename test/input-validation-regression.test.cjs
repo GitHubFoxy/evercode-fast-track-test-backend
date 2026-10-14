@@ -11,7 +11,7 @@ let directory, application;
 const call = (method, route) => request(application.app)[method](route).set('Authorization', `Bearer ${TOKEN}`);
 
 beforeEach(() => {
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-input-'));
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-input-'));
   application = createApplication({ apiToken: TOKEN, coinMarketCapApiKey: KEY,
     databasePath: path.join(directory, 'test.sqlite'), coinMarketCapTimeoutMs: 50,
     coinMarketCapBaseUrl: 'http://127.0.0.1:1', quota: require('./fake-quota.cjs') });

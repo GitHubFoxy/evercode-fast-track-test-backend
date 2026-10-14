@@ -27,7 +27,7 @@ describe('official quota across plan changes', () => {
     budget = new ProviderBudget(database, () => now, fallback, keyInfo);
   };
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-plan-change-'));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-plan-change-'));
     now = Date.parse('2030-01-01T00:00:00Z');
     response = info(5, 4, oldReset);
     keyInfo = jest.fn(async () => response);

@@ -39,7 +39,7 @@ describe("service configuration", () => {
     'fake-token==',
     'header.payload.signature',
   ])('accepts and authenticates valid normalized Bearer token (%s)', async token => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-config-token-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-config-token-'));
     let application;
     try {
       const config = loadConfig({ ...validEnvironment, API_TOKEN: token,

@@ -14,7 +14,7 @@ const bounded = (promise, ms = 15000) => {
 };
 
 test.each([['SIGINT', 'quotes'], ['SIGTERM', 'quotes'], ['SIGINT', 'key-info'], ['SIGTERM', 'key-info']])('%s cancels active %s and exits without new requests', async (signal, phase) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-signal-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-signal-'));
   const probe = createServer();
   await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
   const port = probe.address().port;

@@ -1,5 +1,5 @@
 {
-  "name": "evercode-fast-track-backend",
+  "name": "cryptocurrency-price-tracker-api",
   "version": "1.0.0",
   "private": true,
   "description": "REST API for tracking cryptocurrency prices",

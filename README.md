@@ -1,4 +1,4 @@
-# Evercode Fast Track — backend
+# Cryptocurrency Price Tracker API
 
 REST API для отслеживания цен криптовалют через CoinMarketCap: список отслеживаемых монет (CRUD), актуальные цены, история в SQLite и фоновое обновление. Все цены в USD.
 
@@ -28,7 +28,7 @@ REST API для отслеживания цен криптовалют чере�
 npm ci
 export API_TOKEN='<ваш токен собственного API>'
 export COINMARKETCAP_API_KEY='<ваш ключ CoinMarketCap>'
-export DATABASE_PATH='./data/evercode.sqlite'
+export DATABASE_PATH='./data/crypto-prices.sqlite'
 npm start                 # сначала собирает TypeScript, затем запускает сервис
 ```
 
@@ -61,7 +61,7 @@ SQLite лежит в именованном томе `sqlite-data`. `docker comp
 | --- | --- | --- |
 | `API_TOKEN` | — (обязательна) | Секрет Bearer-аутентификации собственного API: ASCII-буквы, цифры, `-._~+/` и необязательные `=` в конце; формат проверяется до запуска сервера |
 | `COINMARKETCAP_API_KEY` | — (обязательна) | Ключ CoinMarketCap; должен отличаться от `API_TOKEN` |
-| `DATABASE_PATH` | — (обязательна) | Путь к файлу SQLite; пример — `./data/evercode.sqlite` |
+| `DATABASE_PATH` | — (обязательна) | Путь к файлу SQLite; пример — `./data/crypto-prices.sqlite` |
 | `PORT` | `3000` | 1–65535 |
 | `PRICE_CURRENCY` | `USD` | Допустимо только `USD` |
 | `CMC_TIMEOUT_MS` | `10000` | Таймаут запроса к CMC, 1–120000 |

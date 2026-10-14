@@ -10,7 +10,7 @@ RUN npm run build && npm prune --omit=dev \
 FROM node:18-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATABASE_PATH=/data/evercode.sqlite
+    DATABASE_PATH=/data/crypto-prices.sqlite
 WORKDIR /app
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules

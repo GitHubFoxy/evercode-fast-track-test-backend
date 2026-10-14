@@ -18,7 +18,7 @@ describe('shared persistent provider budget and runtime', () => {
   const reopen = extra => { app?.close(); app = createApplication({ ...config, ...extra }); };
   beforeEach(async () => {
     app = undefined;
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evercode-runtime-'));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crypto-api-runtime-'));
     calls = []; now = Date.parse(stamp);
     respond = (url, res) => res.end(JSON.stringify({ data: url.searchParams.get('id').split(',').map(Number).map(quote),
       status: { error_code: 0, credit_count: 1 } }));
